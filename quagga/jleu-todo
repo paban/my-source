@@ -1,0 +1,2 @@
+removes path should look at NEXTHOP_FLAG_FIB (not IGNORE)
+adds should look at IGNORE

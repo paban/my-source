@@ -1,0 +1,64 @@
+#!/bin/bash
+#
+# chkconfig: 2345 17 83
+# description: An LDP signaling engine for use with Zebra
+#
+# processname: ldpd
+# config: /etc/quagga/ldpd.conf
+
+# source function library
+. /etc/rc.d/init.d/functions
+
+# Get network config
+. /etc/sysconfig/network
+
+# quagga command line options
+. /etc/sysconfig/quagga
+
+# Check that networking is up.
+[ "${NETWORKING}" = "no" ] && exit 0
+
+# The process must be configured first.
+[ -f /etc/quagga/ldpd.conf ] || exit 0
+
+RETVAL=0
+
+prog="ldpd"
+
+case "$1" in
+  start)
+	echo -n $"Starting $prog: "
+        daemon /usr/sbin/ldpd -d $LDPD_OPTS
+	RETVAL=$?
+	[ $RETVAL -eq 0 ] && touch /var/lock/subsys/ldpd
+	echo
+	;;
+  stop)
+	echo -n $"Shutting down $prog: "
+	killproc ldpd
+	RETVAL=$?
+	[ $RETVAL -eq 0 ] && rm -f /var/lock/subsys/ldpd
+	echo
+	;;
+  restart|reload)
+        $0 stop
+        $0 start
+	RETVAL=$?
+        ;;
+  condrestart)
+        if [ -f /var/lock/subsys/ldpd ]; then
+                $0 stop
+		$0 start
+        fi
+	RETVAL=$?
+        ;;
+  status)
+        status ldpd
+	RETVAL=$?
+        ;;
+  *)
+	echo $"Usage: $0 {start|stop|restart|reload|condrestart|status}"
+	exit 1
+esac
+
+exit $RETVAL
