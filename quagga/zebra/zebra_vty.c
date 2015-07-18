@@ -29,25 +29,20 @@
 #include "rib.h"
 
 #include "zebra/zserv.h"
-#ifdef HAVE_MPLS
-#include "mpls_vty.h"
-#endif
 
 /* General fucntion for static route. */
 static int
-do_zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
-		     const char *mask_str, const char *gate_str,
-		     const char *flag_str, const char *distance_str,
-		     const char *advmss_str, u_int mpls)
+zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
+		   const char *mask_str, const char *gate_str,
+		   const char *flag_str, const char *distance_str)
 {
   int ret;
   u_char distance;
   struct prefix p;
-  struct zapi_nexthop nexthop;
   struct in_addr gate;
   struct in_addr mask;
-
-  memset(&nexthop, 0, sizeof (struct zapi_nexthop));
+  const char *ifname;
+  u_char flag = 0;
   
   ret = str2prefix (dest_str, &p);
   if (ret <= 0)
@@ -77,33 +72,6 @@ do_zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
   else
     distance = ZEBRA_STATIC_DISTANCE_DEFAULT;
 
-  if (advmss_str)
-    nexthop.advmss = atoi (advmss_str);
-
-#ifdef HAVE_MPLS
-  if (mpls)
-  {
-    struct zmpls_out_segment* out = mpls_out_segment_find(mpls);
-    if (out)
-    {
-      /* there needs to be a better way to do this, this is frought with
-       * possible inconsistency issues.  By the time we get here we've
-       * created a out segment which has a full next hop specification,
-       * and we've started to build a whole new next hop in this
-       * function, are we sure they even match?  Maybe static needs to
-       * creating the out segment and pass around a label struct
-       * and then we build a single nexthop which can be used to
-       * build the out segment and the static route entry.
-       *
-       * for now I punt, just copy the label from the out segment, we'll
-       * magically hook this back together someplace down the line ...
-       */
-      SET_FLAG (nexthop.type, ZEBRA_NEXTHOP_MPLS);
-      nexthop.mpls = out->nh.mpls;
-    }
-  }
-#endif
-
   /* Null0 static route.  */
   if ((gate_str != NULL) && (strncasecmp (gate_str, "Null0", strlen (gate_str)) == 0))
     {
@@ -112,13 +80,10 @@ do_zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
           vty_out (vty, "%% can not have flag %s with Null0%s", flag_str, VTY_NEWLINE);
           return CMD_WARNING;
         }
-      SET_FLAG (nexthop.type, ZEBRA_NEXTHOP_DROP);
-      nexthop.gw.drop = ZEBRA_DROP_NULL;
-
       if (add_cmd)
-        static_add_route (&p, &nexthop, distance, 0);
+        static_add_ipv4 (&p, NULL, NULL, ZEBRA_FLAG_BLACKHOLE, distance, 0);
       else
-        static_delete_route (&p, &nexthop, distance, 0);
+        static_delete_ipv4 (&p, NULL, NULL, distance, 0);
       return CMD_SUCCESS;
     }
 
@@ -127,13 +92,11 @@ do_zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
     switch(flag_str[0]) {
       case 'r':
       case 'R': /* XXX */
-        SET_FLAG (nexthop.type, ZEBRA_NEXTHOP_DROP);
-	nexthop.gw.drop = ZEBRA_DROP_REJECT;
+        SET_FLAG (flag, ZEBRA_FLAG_REJECT);
         break;
       case 'b':
       case 'B': /* XXX */
-        SET_FLAG (nexthop.type, ZEBRA_NEXTHOP_DROP);
-	nexthop.gw.drop = ZEBRA_DROP_BLACKHOLE;
+        SET_FLAG (flag, ZEBRA_FLAG_BLACKHOLE);
         break;
       default:
         vty_out (vty, "%% Malformed flag %s %s", flag_str, VTY_NEWLINE);
@@ -144,9 +107,9 @@ do_zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
   if (gate_str == NULL)
   {
     if (add_cmd)
-      static_add_route (&p, &nexthop, distance, 0);
+      static_add_ipv4 (&p, NULL, NULL, flag, distance, 0);
     else
-      static_delete_route (&p, &nexthop, distance, 0);
+      static_delete_ipv4 (&p, NULL, NULL, distance, 0);
 
     return CMD_SUCCESS;
   }
@@ -155,32 +118,16 @@ do_zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
      address other case gate is treated as interface name. */
   ret = inet_aton (gate_str, &gate);
   if (ret)
-    {
-      nexthop.gw.ipv4 = gate;
-      SET_FLAG (nexthop.type, ZEBRA_NEXTHOP_IPV4);
-    }
+    ifname = NULL;
   else
-    {
-      strncpy(nexthop.intf.name, gate_str, IFNAMSIZ);
-      SET_FLAG (nexthop.type, ZEBRA_NEXTHOP_IFNAME);
-    }
+    ifname = gate_str;
 
   if (add_cmd)
-    static_add_route (&p, &nexthop, distance, 0);
+    static_add_ipv4 (&p, ifname ? NULL : &gate, ifname, flag, distance, 0);
   else
-    static_delete_route (&p, &nexthop, distance, 0);
+    static_delete_ipv4 (&p, ifname ? NULL : &gate, ifname, distance, 0);
 
   return CMD_SUCCESS;
-}
-
-int
-zebra_static_ipv4 (struct vty *vty, int add_cmd, const char *dest_str,
-                  const char *mask_str, const char *gate_str,
-                  const char *flag_str, const char *distance_str,
-                  const char *advmss_str)
-{
-  return do_zebra_static_ipv4(vty, add_cmd, dest_str, mask_str, gate_str,
-    flag_str, distance_str, advmss_str, 0);
 }
 
 /* Static route configuration.  */
@@ -194,22 +141,7 @@ DEFUN (ip_route,
        "IP gateway interface name\n"
        "Null interface\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], NULL, NULL, NULL);
-}
-
-DEFUN (ip_route_advmss, 
-       ip_route_advmss_cmd,
-       "ip route A.B.C.D/M (A.B.C.D|INTERFACE|null0) advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], NULL, NULL, argv[2]);
+  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], NULL, NULL);
 }
 
 DEFUN (ip_route_flags,
@@ -223,7 +155,7 @@ DEFUN (ip_route_flags,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], argv[2], NULL, NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], argv[2], NULL);
 }
 
 DEFUN (ip_route_flags2,
@@ -235,7 +167,7 @@ DEFUN (ip_route_flags2,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, NULL, argv[1], NULL, NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], NULL, NULL, argv[1], NULL);
 }
 
 /* Mask as A.B.C.D format.  */
@@ -250,23 +182,7 @@ DEFUN (ip_route_mask,
        "IP gateway interface name\n"
        "Null interface\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], NULL, NULL, NULL);
-}
-
-DEFUN (ip_route_mask_advmss,
-       ip_route_mask_advmss_cmd,
-       "ip route A.B.C.D A.B.C.D (A.B.C.D|INTERFACE|null0) advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], NULL, NULL, argv[3]);
+  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], NULL, NULL);
 }
 
 DEFUN (ip_route_mask_flags,
@@ -281,7 +197,7 @@ DEFUN (ip_route_mask_flags,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], argv[3], NULL, NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], argv[3], NULL);
 }
 
 DEFUN (ip_route_mask_flags2,
@@ -294,7 +210,7 @@ DEFUN (ip_route_mask_flags2,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], NULL, argv[2], NULL, NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], NULL, argv[2], NULL);
 }
 
 /* Distance option value.  */
@@ -309,23 +225,7 @@ DEFUN (ip_route_distance,
        "Null interface\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], NULL, argv[2], NULL);
-}
-
-DEFUN (ip_route_distance_advmss,
-       ip_route_distance_advmss_cmd,
-       "ip route A.B.C.D/M (A.B.C.D|INTERFACE|null0) <1-255> advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Distance value for this route\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], NULL, argv[2], argv[3]);
+  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], NULL, argv[2]);
 }
 
 DEFUN (ip_route_flags_distance,
@@ -340,7 +240,7 @@ DEFUN (ip_route_flags_distance,
        "Silently discard pkts when matched\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], argv[2], argv[3], NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], NULL, argv[1], argv[2], argv[3]);
 }
 
 DEFUN (ip_route_flags_distance2,
@@ -353,7 +253,7 @@ DEFUN (ip_route_flags_distance2,
        "Silently discard pkts when matched\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], NULL, NULL, argv[1], argv[2], NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], NULL, NULL, argv[1], argv[2]);
 }
 
 DEFUN (ip_route_mask_distance,
@@ -368,24 +268,7 @@ DEFUN (ip_route_mask_distance,
        "Null interface\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], NULL, argv[3], NULL);
-}
-
-DEFUN (ip_route_mask_distance_advmss,
-       ip_route_mask_distance_advmss_cmd,
-       "ip route A.B.C.D A.B.C.D (A.B.C.D|INTERFACE|null0) <1-255> advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Distance value for this route\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], NULL, argv[3], argv[4]);
+  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], NULL, argv[3]);
 }
 
 DEFUN (ip_route_mask_flags_distance,
@@ -401,7 +284,7 @@ DEFUN (ip_route_mask_flags_distance,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], argv[3], argv[4], NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], argv[2], argv[3], argv[4]);
 }
 
 DEFUN (ip_route_mask_flags_distance2,
@@ -415,7 +298,7 @@ DEFUN (ip_route_mask_flags_distance2,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], NULL, argv[2], argv[3], NULL);
+  return zebra_static_ipv4 (vty, 1, argv[0], argv[1], NULL, argv[2], argv[3]);
 }
 
 DEFUN (no_ip_route, 
@@ -429,23 +312,7 @@ DEFUN (no_ip_route,
        "IP gateway interface name\n"
        "Null interface\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], NULL, NULL, NULL);
-}
-
-DEFUN (no_ip_route_advmss, 
-       no_ip_route_advmss_cmd,
-       "no ip route A.B.C.D/M (A.B.C.D|INTERFACE|null0) advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], NULL, NULL, argv[2]);
+  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], NULL, NULL);
 }
 
 ALIAS (no_ip_route,
@@ -470,7 +337,7 @@ DEFUN (no_ip_route_flags2,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], NULL, NULL, NULL, NULL, NULL);
+  return zebra_static_ipv4 (vty, 0, argv[0], NULL, NULL, NULL, NULL);
 }
 
 DEFUN (no_ip_route_mask,
@@ -485,24 +352,7 @@ DEFUN (no_ip_route_mask,
        "IP gateway interface name\n"
        "Null interface\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], NULL, NULL, NULL);
-}
-
-DEFUN (no_ip_route_mask_advmss,
-       no_ip_route_mask_advmss_cmd,
-       "no ip route A.B.C.D A.B.C.D (A.B.C.D|INTERFACE|null0) advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], NULL, NULL, argv[3]);
+  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], NULL, NULL);
 }
 
 ALIAS (no_ip_route_mask,
@@ -529,7 +379,7 @@ DEFUN (no_ip_route_mask_flags2,
        "Emit an ICMP unreachable when matched\n"
        "Silently discard pkts when matched\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], NULL, NULL, NULL, NULL);
+  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], NULL, NULL, NULL);
 }
 
 DEFUN (no_ip_route_distance,
@@ -544,24 +394,7 @@ DEFUN (no_ip_route_distance,
        "Null interface\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], NULL, argv[2], NULL);
-}
-
-DEFUN (no_ip_route_distance_advmss,
-       no_ip_route_distance_advmss_cmd,
-       "no ip route A.B.C.D/M (A.B.C.D|INTERFACE|null0) <1-255> advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Distance value for this route\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], NULL, argv[2], argv[3]);
+  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], NULL, argv[2]);
 }
 
 DEFUN (no_ip_route_flags_distance,
@@ -577,7 +410,7 @@ DEFUN (no_ip_route_flags_distance,
        "Silently discard pkts when matched\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], argv[2], argv[3], NULL);
+  return zebra_static_ipv4 (vty, 0, argv[0], NULL, argv[1], argv[2], argv[3]);
 }
 
 DEFUN (no_ip_route_flags_distance2,
@@ -591,7 +424,7 @@ DEFUN (no_ip_route_flags_distance2,
        "Silently discard pkts when matched\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], NULL, NULL, argv[1], argv[2], NULL);
+  return zebra_static_ipv4 (vty, 0, argv[0], NULL, NULL, argv[1], argv[2]);
 }
 
 DEFUN (no_ip_route_mask_distance,
@@ -607,25 +440,7 @@ DEFUN (no_ip_route_mask_distance,
        "Null interface\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], NULL, argv[3], NULL);
-}
-
-DEFUN (no_ip_route_mask_distance_advmss,
-       no_ip_route_mask_distance_advmss_cmd,
-       "no ip route A.B.C.D A.B.C.D (A.B.C.D|INTERFACE|null0) <1-255> advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "IP gateway address\n"
-       "IP gateway interface name\n"
-       "Null interface\n"
-       "Distance value for this route\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], NULL, argv[3], argv[4]);
+  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], NULL, argv[3]);
 }
 
 DEFUN (no_ip_route_mask_flags_distance,
@@ -642,7 +457,7 @@ DEFUN (no_ip_route_mask_flags_distance,
        "Silently discard pkts when matched\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], argv[3], argv[4], NULL);
+  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], argv[2], argv[3], argv[4]);
 }
 
 DEFUN (no_ip_route_mask_flags_distance2,
@@ -657,7 +472,7 @@ DEFUN (no_ip_route_mask_flags_distance2,
        "Silently discard pkts when matched\n"
        "Distance value for this route\n")
 {
-  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], NULL, argv[2], argv[3], NULL);
+  return zebra_static_ipv4 (vty, 0, argv[0], argv[1], NULL, argv[2], argv[3]);
 }
 
 char *proto_rm[AFI_MAX][ZEBRA_ROUTE_MAX+1];	/* "any" == ZEBRA_ROUTE_MAX */
@@ -712,474 +527,6 @@ DEFUN (no_ip_protocol,
   proto_rm[AFI_IP][i] = NULL;
   return CMD_SUCCESS;
 }
-#ifdef HAVE_MPLS
-/* Static route + MPLS configuration.  */
-static int
-zebra_static_ipv4_mpls (struct vty *vty, int add_cmd, const char *dest_str,
-  const char *addr, const char *mask_str, const char *distance,
-  const char *advmss, const char **argv)
-{
-  struct zmpls_out_segment out;
-  struct zmpls_ftn *old;
-  struct zmpls_ftn ftn;
-  struct prefix p;
-  int result;
-
-  if (str2prefix (dest_str, &p) <= 0)
-    {
-      vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-
-  /* Cisco like mask notation. */
-  if (mask_str)
-    {
-      struct in_addr mask;
-      if (inet_aton (mask_str, &mask) == 0)
-        {
-          vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-          return CMD_WARNING;
-        }
-      p.prefixlen = ip_masklen (mask);
-    }
-
-  /* Apply mask for given prefix. */
-  apply_mask (&p);
-
-  memcpy(&ftn.fec.u.p, &p, sizeof(p));
-  ftn.fec.type = ZEBRA_MPLS_FEC_IPV4;
-  ftn.fec.owner = ZEBRA_ROUTE_STATIC;
-  old = mpls_ftn_find_by_fec(&ftn.fec);
-
-  memset (&out, 0, sizeof (out));
-  out.owner = ZEBRA_ROUTE_STATIC;
-  result = nhlfe_parse (vty, argv, &out, addr);
-  if (result != CMD_SUCCESS)
-    return result;
-
-  out.index = mpls_out_segment_find_index_by_nhlfe(&out);
-
-  if (add_cmd)
-  {
-    if (old)
-    {
-      vty_out(vty, "FTN already exists%s",VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-
-    if (out.index)
-    {
-      vty_out(vty, "NHLFE already exists%s",VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-
-    if ((result = mpls_out_segment_register (&out)))
-    {
-      vty_out(vty, "Unable to register NHLFE(%d)%s", result, VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-    ftn.out_index = out.index;
-
-  } else {
-    if (!out.index)
-    {
-      vty_out(vty, "No such NHLFE%s",VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-
-    if (!old)
-    {
-      vty_out(vty, "No such FEC%s",VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-
-    mpls_ftn_unregister(old, 0);
-  }
-
-  result = do_zebra_static_ipv4 (vty, add_cmd, dest_str, mask_str, addr, NULL,
-    distance, advmss, out.index);
-
-  if (add_cmd)
-  {
-    if (result != CMD_SUCCESS)
-    {
-      mpls_out_segment_unregister_by_index (out.index);
-      return CMD_WARNING;
-    }
-    mpls_ftn_register(&ftn, 0);
-  }
-  else
-  {
-    mpls_out_segment_unregister_by_index (out.index);
-  }
-  return CMD_SUCCESS;
-}
-
-DEFUN (ip_route_mpls, 
-       ip_route_mpls_cmd,
-       "ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], NULL, NULL, NULL, NULL, &argv[1]);
-}
-
-DEFUN (ip_route_mpls_advmss, 
-       ip_route_mpls_advmss_cmd,
-       "ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], NULL, NULL, NULL, argv[4], &argv[1]);
-}
-
-DEFUN (ip_route_mpls_addr,
-       ip_route_mpls_addr_cmd,
-       "ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], argv[4], NULL, NULL, NULL, &argv[1]);
-}
-
-DEFUN (ip_route_mpls_addr_advmss,
-       ip_route_mpls_addr_advmss_cmd,
-       "ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], argv[4], NULL, NULL, argv[5], &argv[1]);
-}
-
-/* Mask as A.B.C.D format.  */
-DEFUN (ip_route_mpls_mask,
-       ip_route_mpls_mask_cmd,
-       "ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], argv[1], NULL, NULL, NULL, &argv[2]);
-}
-
-DEFUN (ip_route_mpls_mask_addr,
-       ip_route_mpls_mask_addr_cmd,
-       "ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE ADDR",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], argv[1], argv[5], NULL, NULL, &argv[2]);
-}
-
-/* Distance option value.  */
-DEFUN (ip_route_mpls_distance,
-       ip_route_mpls_distance_cmd,
-       "ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE <1-255>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], NULL, NULL, argv[4], NULL, &argv[1]);
-}
-
-DEFUN (ip_route_mpls_distance_addr,
-       ip_route_mpls_distance_addr_cmd,
-       "ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR <1-255>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], NULL, argv[4], argv[5], NULL, &argv[1]);
-}
-
-DEFUN (ip_route_mpls_mask_distance,
-       ip_route_mpls_mask_distance_cmd,
-       "ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE <1-255>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], argv[1], NULL, argv[5], NULL, &argv[2]);
-}
-
-DEFUN (ip_route_mpls_mask_distance_addr,
-       ip_route_mpls_mask_distance_addr_cmd,
-       "ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE ADDR <1-255>",
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 1, argv[0], argv[1], argv[5], argv[6], NULL, &argv[2]);
-}
-
-DEFUN (no_ip_route_mpls,
-       no_ip_route_mpls_cmd,
-       "no ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], NULL, NULL, NULL, NULL, &argv[1]);
-}
-
-DEFUN (no_ip_route_mpls_advmss,
-       no_ip_route_mpls_advmss_cmd,
-       "no ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], NULL, NULL, NULL, argv[4], &argv[1]);
-}
-DEFUN (no_ip_route_mpls_addr,
-       no_ip_route_mpls_addr_cmd,
-       "no ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], argv[4], NULL, NULL, NULL, &argv[1]);
-}
-
-DEFUN (no_ip_route_mpls_addr_advmss,
-       no_ip_route_mpls_addr_advmss_cmd,
-       "no ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], argv[4], NULL, NULL, argv[5], &argv[1]);
-}
-
-DEFUN (no_ip_route_mpls_mask,
-       no_ip_route_mpls_mask_cmd,
-       "no ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], argv[1], NULL, NULL, NULL, &argv[2]);
-}
-
-DEFUN (no_ip_route_mpls_mask_addr,
-       no_ip_route_mpls_mask_addr_cmd,
-       "no ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE ADDR",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], argv[1], argv[5], NULL, NULL, &argv[2]);
-}
-
-DEFUN (no_ip_route_mpls_distance,
-       no_ip_route_mpls_distance_cmd,
-       "no ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE <1-255>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], NULL, NULL, argv[4], NULL, &argv[1]);
-}
-
-DEFUN (no_ip_route_mpls_distance_addr,
-       no_ip_route_mpls_distance_addr_cmd,
-       "no ip route A.B.C.D/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR <1-255>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix (e.g. 10.0.0.0/8)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], NULL, argv[4], argv[5], NULL, &argv[1]);
-}
-
-DEFUN (no_ip_route_mpls_mask_distance,
-       no_ip_route_mpls_mask_distance_cmd,
-       "no ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE <1-255>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], argv[1], NULL, argv[5], NULL, &argv[2]);
-}
-
-DEFUN (no_ip_route_mpls_mask_distance_addr,
-       no_ip_route_mpls_mask_distance_addr_cmd,
-       "no ip route A.B.C.D A.B.C.D (gen|atm|fr) VALUE nexthop INTERFACE ADDR <1-255>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IP destination prefix\n"
-       "IP destination prefix mask\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IP gateway interface name\n"
-       "IP gateway address\n"
-       "Distance value for this route\n")
-{
-  return zebra_static_ipv4_mpls (vty, 0, argv[0], argv[1], argv[5], argv[6], NULL, &argv[2]);
-}
-#endif /* HAVE_MPLS */
 
 /* New RIB.  Detailed information for IPv4 route. */
 static void
@@ -1237,83 +584,31 @@ vty_show_ip_route_detail (struct vty *vty, struct route_node *rn)
       for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
 	{
           char addrstr[32];
-	  if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_IGNORE))
-	    continue;
-
-          if (nexthop->advmss)
-            vty_out (vty, " advmss %d", nexthop->advmss);
 
 	  vty_out (vty, "  %c",
 		   CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB) ? '*' : ' ');
 
-#ifdef HAVE_IPV6
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
-            {
-              if (!IPV6_ADDR_SAME(&nexthop->src.ipv6, &in6addr_any))
-                {
-		  if (inet_ntop(AF_INET6, &nexthop->src.ipv6, addrstr,
-		      sizeof addrstr))
-                    vty_out (vty, ", src %s", addrstr);
-                }
-            }
-	  else
-#endif /* HAVE_IPV6 */
-          if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
+	  switch (nexthop->type)
 	    {
+	    case NEXTHOP_TYPE_IPV4:
+	    case NEXTHOP_TYPE_IPV4_IFINDEX:
 	      vty_out (vty, " %s", inet_ntoa (nexthop->gate.ipv4));
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-		vty_out (vty, ", via %s", nexthop->ifname);
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	        if (if_lookup_by_index(nexthop->ifindex))
-		  vty_out (vty, ", via %s", ifindex2ifname(nexthop->ifindex));
-
-              if (nexthop->src.ipv4.s_addr)
-                {
-		  if (inet_ntop(AF_INET, &nexthop->src.ipv4, addrstr,
-		      sizeof addrstr))
-                    vty_out (vty, ", src %s", addrstr);
-                }
-	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	    {
-	      vty_out (vty, " directly connected, %s", nexthop->ifname);
-	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	    {
+	      if (nexthop->ifindex)
+		vty_out (vty, ", via %s", ifindex2ifname (nexthop->ifindex));
+	      break;
+	    case NEXTHOP_TYPE_IFINDEX:
 	      vty_out (vty, " directly connected, %s",
 		       ifindex2ifname (nexthop->ifindex));
+	      break;
+	    case NEXTHOP_TYPE_IFNAME:
+	      vty_out (vty, " directly connected, %s", nexthop->ifname);
+	      break;
+      case NEXTHOP_TYPE_BLACKHOLE:
+        vty_out (vty, " directly connected, Null0");
+        break;
+      default:
+	      break;
 	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_DROP))
-	    {
-	      switch (nexthop->drop)
-		{
-		  case ZEBRA_DROP_NULL:
-		    vty_out (vty, " directly connected, Null0");
-		    break;
-		  case ZEBRA_DROP_REJECT:
-		    vty_out (vty, ", reject");
-		    break;
-		  case ZEBRA_DROP_BLACKHOLE:
-		    vty_out (vty, ", blackhole");
-		    break;
-		  default:
-		    assert(0);
-		}
-	    }
-#ifdef HAVE_MPLS
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_MPLS))
-	    {
-	      struct zmpls_out_segment *out;
-	      char buf[16];
-
-	      out = mpls_out_segment_find(nexthop->mpls);
-	      if (out)
-		mpls_print_label(&out->nh.mpls, buf);
-	      else
-		strcpy(buf, "not found");
-	      vty_out (vty, " (label %s)", buf);
-	    }
-#endif
 	  if (! CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
 	    vty_out (vty, " inactive");
 
@@ -1321,48 +616,48 @@ vty_show_ip_route_detail (struct vty *vty, struct route_node *rn)
 	    {
 	      vty_out (vty, " (recursive");
 		
-#ifdef HAVE_IPV6
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
-                {
-                  if (!IPV6_ADDR_SAME(&nexthop->src.ipv6, &in6addr_any))
-                    {
-		      if (inet_ntop(AF_INET6, &nexthop->src.ipv6, addrstr,
-		          sizeof addrstr))
-                        vty_out (vty, ", src %s", addrstr);
-                    }
-                }
-	      else
-#endif /* HAVE_IPV6 */
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
+	      switch (nexthop->rtype)
 		{
+		case NEXTHOP_TYPE_IPV4:
+		case NEXTHOP_TYPE_IPV4_IFINDEX:
 		  vty_out (vty, " via %s)", inet_ntoa (nexthop->rgate.ipv4));
-                  if (nexthop->src.ipv4.s_addr)
-                    {
-		      if (inet_ntop(AF_INET, &nexthop->src.ipv4, addrstr,
-		          sizeof addrstr))
-                        vty_out (vty, ", src %s", addrstr);
-                    }
-		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFINDEX))
-		{
+		  break;
+		case NEXTHOP_TYPE_IFINDEX:
+		case NEXTHOP_TYPE_IFNAME:
 		  vty_out (vty, " is directly connected, %s)",
 			   ifindex2ifname (nexthop->rifindex));
+		  break;
+		default:
+		  break;
 		}
-#ifdef HAVE_MPLS
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_MPLS))
-		{
-		  struct zmpls_out_segment *out;
-		  char buf[16];
-
-		  out = mpls_out_segment_find(nexthop->rmpls);
-		  if (out)
-		    mpls_print_label(&out->nh.mpls, buf);
-		  else
-		    strcpy(buf, "not found");
-		  vty_out (vty, " (label %s)", buf);
-		}
-#endif
 	    }
+	  switch (nexthop->type)
+            {
+            case NEXTHOP_TYPE_IPV4:
+            case NEXTHOP_TYPE_IPV4_IFINDEX:
+            case NEXTHOP_TYPE_IPV4_IFNAME:
+              if (nexthop->src.ipv4.s_addr)
+                {
+		  if (inet_ntop(AF_INET, &nexthop->src.ipv4, addrstr,
+		      sizeof addrstr))
+                    vty_out (vty, ", src %s", addrstr);
+                }
+              break;
+#ifdef HAVE_IPV6
+            case NEXTHOP_TYPE_IPV6:
+            case NEXTHOP_TYPE_IPV6_IFINDEX:
+            case NEXTHOP_TYPE_IPV6_IFNAME:
+              if (!IPV6_ADDR_SAME(&nexthop->src.ipv6, &in6addr_any))
+                {
+		  if (inet_ntop(AF_INET6, &nexthop->src.ipv6, addrstr,
+		      sizeof addrstr))
+                    vty_out (vty, ", src %s", addrstr);
+                }
+              break;
+#endif /* HAVE_IPV6 */
+            default:
+	       break;
+            }
 	  vty_out (vty, "%s", VTY_NEWLINE);
 	}
       vty_out (vty, "%s", VTY_NEWLINE);
@@ -1379,9 +674,6 @@ vty_show_ip_route (struct vty *vty, struct route_node *rn, struct rib *rib)
   /* Nexthop information. */
   for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
     {
-      if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_IGNORE))
-         continue;
-
       if (nexthop == rib->nexthop)
 	{
 	  /* Prefix information. */
@@ -1406,72 +698,27 @@ vty_show_ip_route (struct vty *vty, struct route_node *rn, struct rib *rib)
 		 ? '*' : ' ',
 		 len - 3, ' ');
 
-#ifdef HAVE_IPV6
-      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
-        {
-          if (!IPV6_ADDR_SAME(&nexthop->src.ipv6, &in6addr_any))
-            {
-	      if (inet_ntop(AF_INET6, &nexthop->src.ipv6, buf, sizeof buf))
-                vty_out (vty, ", src %s", buf);
-            }
-        }
-      else
-#endif /* HAVE_IPV6 */
-      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
+      switch (nexthop->type)
 	{
+	case NEXTHOP_TYPE_IPV4:
+	case NEXTHOP_TYPE_IPV4_IFINDEX:
 	  vty_out (vty, " via %s", inet_ntoa (nexthop->gate.ipv4));
-          if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	    vty_out (vty, ", %s", nexthop->ifname);
-          else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	    if (if_lookup_by_index(nexthop->ifindex))
-	      vty_out (vty, ", %s", ifindex2ifname (nexthop->ifindex));
-
-          if (nexthop->src.ipv4.s_addr)
-            {
-	      if (inet_ntop(AF_INET, &nexthop->src.ipv4, buf, sizeof buf))
-                vty_out (vty, ", src %s", buf);
-            }
-	}
-      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	{
-	  vty_out (vty, " is directly connected, %s", nexthop->ifname);
-	}
-      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	{
+	  if (nexthop->ifindex)
+	    vty_out (vty, ", %s", ifindex2ifname (nexthop->ifindex));
+	  break;
+	case NEXTHOP_TYPE_IFINDEX:
 	  vty_out (vty, " is directly connected, %s",
 		   ifindex2ifname (nexthop->ifindex));
+	  break;
+	case NEXTHOP_TYPE_IFNAME:
+	  vty_out (vty, " is directly connected, %s", nexthop->ifname);
+	  break;
+  case NEXTHOP_TYPE_BLACKHOLE:
+    vty_out (vty, " is directly connected, Null0");
+    break;
+  default:
+	  break;
 	}
-      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_DROP))
-	{
-	  switch (nexthop->drop)
-	    {
-	      case ZEBRA_DROP_NULL:
-		vty_out (vty, " directly connected, Null0");
-		break;
-	      case ZEBRA_DROP_REJECT:
-		vty_out (vty, ", reject");
-		break;
-	      case ZEBRA_DROP_BLACKHOLE:
-		vty_out (vty, ", blackhole");
-		break;
-	      default:
-		assert(0);
-	    }
-	}
-#ifdef HAVE_MPLS
-      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_MPLS))
-	{
-	  struct zmpls_out_segment *out;
-	  char buf[16];
-
-	  out = mpls_out_segment_find(nexthop->mpls);
-	  if (out)
-	    mpls_print_label(&out->nh.mpls, buf);
-	  else
-	    strcpy(buf, "not found");
-	  vty_out (vty, " (label %s)", buf);
-	}
-#endif
       if (! CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
 	vty_out (vty, " inactive");
 
@@ -1479,53 +726,46 @@ vty_show_ip_route (struct vty *vty, struct route_node *rn, struct rib *rib)
 	{
 	  vty_out (vty, " (recursive");
 		
-#ifdef HAVE_IPV6
-	  if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
-            {
-              if (!IPV6_ADDR_SAME(&nexthop->src.ipv6, &in6addr_any))
-                {
-		  if (inet_ntop(AF_INET6, &nexthop->src.ipv6, buf, sizeof buf))
-                    vty_out (vty, ", src %s", buf);
-                }
-            }
-          else
-#endif /* HAVE_IPV6 */
-	  if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
+	  switch (nexthop->rtype)
 	    {
-	      vty_out (vty, " via %s", inet_ntoa (nexthop->rgate.ipv4));
-	      if (nexthop->rifindex)
-		vty_out (vty, ", %s", ifindex2ifname (nexthop->rifindex));
-	      vty_out (vty, ")");
-
-              if (nexthop->src.ipv4.s_addr)
-                {
-	          if (inet_ntop(AF_INET, &nexthop->src.ipv4, buf, sizeof buf))
-                    vty_out (vty, ", src %s", buf);
-                }
-	    }
-	  else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFINDEX))
-	    {
+	    case NEXTHOP_TYPE_IPV4:
+	    case NEXTHOP_TYPE_IPV4_IFINDEX:
+	      vty_out (vty, " via %s)", inet_ntoa (nexthop->rgate.ipv4));
+	      break;
+	    case NEXTHOP_TYPE_IFINDEX:
+	    case NEXTHOP_TYPE_IFNAME:
 	      vty_out (vty, " is directly connected, %s)",
 		       ifindex2ifname (nexthop->rifindex));
+	      break;
+	    default:
+	      break;
 	    }
-#ifdef HAVE_MPLS
-	  if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_MPLS))
-	    {
-	      struct zmpls_out_segment *out;
-	      char buf[16];
-
-	      out = mpls_out_segment_find(nexthop->rmpls);
-	      if (out)
-		mpls_print_label(&out->nh.mpls, buf);
-	      else
-		strcpy(buf, "not found");
-	      vty_out (vty, " (label %s)", buf);
-	    }
-#endif
 	}
-
-      if (nexthop->advmss)
-        vty_out (vty, " advmss %d", nexthop->advmss);
+      switch (nexthop->type)
+        {
+          case NEXTHOP_TYPE_IPV4:
+          case NEXTHOP_TYPE_IPV4_IFINDEX:
+          case NEXTHOP_TYPE_IPV4_IFNAME:
+            if (nexthop->src.ipv4.s_addr)
+              {
+		if (inet_ntop(AF_INET, &nexthop->src.ipv4, buf, sizeof buf))
+                  vty_out (vty, ", src %s", buf);
+              }
+            break;
+#ifdef HAVE_IPV6
+          case NEXTHOP_TYPE_IPV6:
+          case NEXTHOP_TYPE_IPV6_IFINDEX:
+          case NEXTHOP_TYPE_IPV6_IFNAME:
+            if (!IPV6_ADDR_SAME(&nexthop->src.ipv6, &in6addr_any))
+              {
+		if (inet_ntop(AF_INET6, &nexthop->src.ipv6, buf, sizeof buf))
+                  vty_out (vty, ", src %s", buf);
+              }
+            break;
+#endif /* HAVE_IPV6 */
+          default:
+	    break;
+        }
 
       if (CHECK_FLAG (rib->flags, ZEBRA_FLAG_BLACKHOLE))
                vty_out (vty, ", bh");
@@ -1714,8 +954,6 @@ DEFUN (show_ip_route_protocol,
     type = ZEBRA_ROUTE_RIP;
   else if (strncmp (argv[0], "s", 1) == 0)
     type = ZEBRA_ROUTE_STATIC;
-  else if (strncmp (argv[0], "l", 1) == 0)
-    type = ZEBRA_ROUTE_LDP;
   else 
     {
       vty_out (vty, "Unknown route type%s", VTY_NEWLINE);
@@ -1873,7 +1111,7 @@ static int
 static_config_ipv4 (struct vty *vty)
 {
   struct route_node *rn;
-  struct static_route *si;  
+  struct static_ipv4 *si;  
   struct route_table *stable;
   int write;
 
@@ -1890,50 +1128,31 @@ static_config_ipv4 (struct vty *vty)
         vty_out (vty, "ip route %s/%d", inet_ntoa (rn->p.u.prefix4),
                  rn->p.prefixlen);
 
-        if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_DROP))
-	  switch(si->nh.gw.drop)
-	    {
-	      case ZEBRA_DROP_NULL:
-		vty_out (vty, " Null0");
-		break;
-	      case ZEBRA_DROP_REJECT:
-		vty_out (vty, " %s", "reject");
-		break;
-	      case ZEBRA_DROP_BLACKHOLE:
-		vty_out (vty, " %s", "blackhole");
-		break;
-	      default:
-		assert(0);
-	    }
-	else
-	  {
-	    if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_IPV4))
-	      vty_out (vty, " %s", inet_ntoa (si->nh.gw.ipv4));
-	    if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_IFNAME))
-	      vty_out (vty, " %s", si->nh.intf.name);
-#ifdef HAVE_MPLS
-	    if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_MPLS))
-	      {
-		int index = mpls_out_segment_find_index_by_nexthop(&si->nh);
-		vty_out (vty, " ");
-		if (index)
-		  {
-		    mpls_out_segment_config_write (vty,
-		      mpls_out_segment_find(index));
-		  }
-		else
-		  {
-		    vty_out (vty, "(unknown)");
-		  }
-	      }
-#endif
-	  }
+        switch (si->type)
+          {
+            case STATIC_IPV4_GATEWAY:
+              vty_out (vty, " %s", inet_ntoa (si->gate.ipv4));
+              break;
+            case STATIC_IPV4_IFNAME:
+              vty_out (vty, " %s", si->gate.ifname);
+              break;
+            case STATIC_IPV4_BLACKHOLE:
+              vty_out (vty, " Null0");
+              break;
+          }
         
+        /* flags are incompatible with STATIC_IPV4_BLACKHOLE */
+        if (si->type != STATIC_IPV4_BLACKHOLE)
+          {
+            if (CHECK_FLAG(si->flags, ZEBRA_FLAG_REJECT))
+              vty_out (vty, " %s", "reject");
+
+            if (CHECK_FLAG(si->flags, ZEBRA_FLAG_BLACKHOLE))
+              vty_out (vty, " %s", "blackhole");
+          }
+
         if (si->distance != ZEBRA_STATIC_DISTANCE_DEFAULT)
           vty_out (vty, " %d", si->distance);
-
-        if (si->nh.advmss)
-	  vty_out (vty, " advmss %d", si->nh.advmss);
 
         vty_out (vty, "%s", VTY_NEWLINE);
 
@@ -1982,11 +1201,11 @@ static_ipv6_func (struct vty *vty, int add_cmd, const char *dest_str,
   int ret;
   u_char distance;
   struct prefix p;
+  struct in6_addr *gate = NULL;
   struct in6_addr gate_addr;
-  struct zapi_nexthop nh;
+  u_char type = 0;
   int table = 0;
-
-  memset(&nh, 0, sizeof(struct zapi_nexthop));
+  u_char flag = 0;
   
   ret = str2prefix (dest_str, &p);
   if (ret <= 0)
@@ -2003,13 +1222,11 @@ static_ipv6_func (struct vty *vty, int add_cmd, const char *dest_str,
     switch(flag_str[0]) {
       case 'r':
       case 'R': /* XXX */
-        SET_FLAG (nh.type, ZEBRA_NEXTHOP_DROP);
-	nh.gw.drop = ZEBRA_DROP_REJECT;
+        SET_FLAG (flag, ZEBRA_FLAG_REJECT);
         break;
       case 'b':
       case 'B': /* XXX */
-        SET_FLAG (nh.type, ZEBRA_NEXTHOP_DROP);
-	nh.gw.drop = ZEBRA_DROP_BLACKHOLE;
+        SET_FLAG (flag, ZEBRA_FLAG_BLACKHOLE);
         break;
       default:
         vty_out (vty, "%% Malformed flag %s %s", flag_str, VTY_NEWLINE);
@@ -2036,30 +1253,27 @@ static_ipv6_func (struct vty *vty, int add_cmd, const char *dest_str,
 	  vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
 	  return CMD_WARNING;
 	}
-
-      SET_FLAG (nh.type, ZEBRA_NEXTHOP_IPV6);
-      SET_FLAG (nh.type, ZEBRA_NEXTHOP_IFNAME);
-      nh.gw.ipv6 = gate_addr;
-      strncpy(nh.intf.name, ifname, IFNAMSIZ);
+      type = STATIC_IPV6_GATEWAY_IFNAME;
+      gate = &gate_addr;
     }
   else
     {
       if (ret == 1)
 	{
-	  SET_FLAG (nh.type, ZEBRA_NEXTHOP_IPV6);
-	  nh.gw.ipv6 = gate_addr;
+	  type = STATIC_IPV6_GATEWAY;
+	  gate = &gate_addr;
 	}
       else
 	{
-	  SET_FLAG (nh.type, ZEBRA_NEXTHOP_IFNAME);
-	  strncpy(nh.intf.name, gate_str, IFNAMSIZ);
+	  type = STATIC_IPV6_IFNAME;
+	  ifname = gate_str;
 	}
     }
 
   if (add_cmd)
-    static_add_route (&p, &nh, distance, table);
+    static_add_ipv6 (&p, type, gate, ifname, flag, distance, table);
   else
-    static_delete_route (&p, &nh, distance, table);
+    static_delete_ipv6 (&p, type, gate, ifname, distance, table);
 
   return CMD_SUCCESS;
 }
@@ -2072,20 +1286,6 @@ DEFUN (ipv6_route,
        "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
        "IPv6 gateway address\n"
        "IPv6 gateway interface name\n")
-{
-  return static_ipv6_func (vty, 1, argv[0], argv[1], NULL, NULL, NULL);
-}
-
-DEFUN (ipv6_route_advmss,
-       ipv6_route_advmss_cmd,
-       "ipv6 route X:X::X:X/M (X:X::X:X|INTERFACE) advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
 {
   return static_ipv6_func (vty, 1, argv[0], argv[1], NULL, NULL, NULL);
 }
@@ -2116,20 +1316,6 @@ DEFUN (ipv6_route_ifname,
   return static_ipv6_func (vty, 1, argv[0], argv[1], argv[2], NULL, NULL);
 }
 
-DEFUN (ipv6_route_ifname_advmss,
-       ipv6_route_ifname_advmss_cmd,
-       "ipv6 route X:X::X:X/M X:X::X:X INTERFACE advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return static_ipv6_func (vty, 1, argv[0], argv[1], argv[2], NULL, NULL);
-}
-
 DEFUN (ipv6_route_ifname_flags,
        ipv6_route_ifname_flags_cmd,
        "ipv6 route X:X::X:X/M X:X::X:X INTERFACE (reject|blackhole)",
@@ -2153,21 +1339,6 @@ DEFUN (ipv6_route_pref,
        "IPv6 gateway address\n"
        "IPv6 gateway interface name\n"
        "Distance value for this prefix\n")
-{
-  return static_ipv6_func (vty, 1, argv[0], argv[1], NULL, NULL, argv[2]);
-}
-
-DEFUN (ipv6_route_pref_advmss,
-       ipv6_route_pref_advmss_cmd,
-       "ipv6 route X:X::X:X/M (X:X::X:X|INTERFACE) <1-255> advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Distance value for this prefix\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
 {
   return static_ipv6_func (vty, 1, argv[0], argv[1], NULL, NULL, argv[2]);
 }
@@ -2200,21 +1371,6 @@ DEFUN (ipv6_route_ifname_pref,
   return static_ipv6_func (vty, 1, argv[0], argv[1], argv[2], NULL, argv[3]);
 }
 
-DEFUN (ipv6_route_ifname_pref_advmss,
-       ipv6_route_ifname_pref_advmss_cmd,
-       "ipv6 route X:X::X:X/M X:X::X:X INTERFACE <1-255> advmss <0-65495>",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Distance value for this prefix\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return static_ipv6_func (vty, 1, argv[0], argv[1], argv[2], NULL, argv[3]);
-}
-
 DEFUN (ipv6_route_ifname_flags_pref,
        ipv6_route_ifname_flags_pref_cmd,
        "ipv6 route X:X::X:X/M X:X::X:X INTERFACE (reject|blackhole) <1-255>",
@@ -2239,21 +1395,6 @@ DEFUN (no_ipv6_route,
        "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
        "IPv6 gateway address\n"
        "IPv6 gateway interface name\n")
-{
-  return static_ipv6_func (vty, 0, argv[0], argv[1], NULL, NULL, NULL);
-}
-
-DEFUN (no_ipv6_route_advmss,
-       no_ipv6_route_advmss_cmd,
-       "no ipv6 route X:X::X:X/M (X:X::X:X|INTERFACE) advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
 {
   return static_ipv6_func (vty, 0, argv[0], argv[1], NULL, NULL, NULL);
 }
@@ -2283,21 +1424,6 @@ DEFUN (no_ipv6_route_ifname,
   return static_ipv6_func (vty, 0, argv[0], argv[1], argv[2], NULL, NULL);
 }
 
-DEFUN (no_ipv6_route_ifname_advmss,
-       no_ipv6_route_ifname_advmss_cmd,
-       "no ipv6 route X:X::X:X/M X:X::X:X INTERFACE advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return static_ipv6_func (vty, 0, argv[0], argv[1], argv[2], NULL, NULL);
-}
-
 ALIAS (no_ipv6_route_ifname,
        no_ipv6_route_ifname_flags_cmd,
        "no ipv6 route X:X::X:X/M X:X::X:X INTERFACE (reject|blackhole)",
@@ -2320,22 +1446,6 @@ DEFUN (no_ipv6_route_pref,
        "IPv6 gateway address\n"
        "IPv6 gateway interface name\n"
        "Distance value for this prefix\n")
-{
-  return static_ipv6_func (vty, 0, argv[0], argv[1], NULL, NULL, argv[2]);
-}
-
-DEFUN (no_ipv6_route_pref_advmss,
-       no_ipv6_route_pref_advmss_cmd,
-       "no ipv6 route X:X::X:X/M (X:X::X:X|INTERFACE) <1-255> advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Distance value for this prefix\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
 {
   return static_ipv6_func (vty, 0, argv[0], argv[1], NULL, NULL, argv[2]);
 }
@@ -2371,22 +1481,6 @@ DEFUN (no_ipv6_route_ifname_pref,
   return static_ipv6_func (vty, 0, argv[0], argv[1], argv[2], NULL, argv[3]);
 }
 
-DEFUN (no_ipv6_route_ifname_pref_advmss,
-       no_ipv6_route_ifname_pref_advmss_cmd,
-       "no ipv6 route X:X::X:X/M X:X::X:X INTERFACE <1-255> advmss <0-65495>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "IPv6 gateway address\n"
-       "IPv6 gateway interface name\n"
-       "Distance value for this prefix\n"
-       "Advertised MSS\n"
-       "Maximum TCP Segment Size\n")
-{
-  return static_ipv6_func (vty, 0, argv[0], argv[1], argv[2], NULL, argv[3]);
-}
-
 DEFUN (no_ipv6_route_ifname_flags_pref,
        no_ipv6_route_ifname_flags_pref_cmd,
        "no ipv6 route X:X::X:X/M X:X::X:X INTERFACE (reject|blackhole) <1-255>",
@@ -2402,195 +1496,6 @@ DEFUN (no_ipv6_route_ifname_flags_pref,
 {
   return static_ipv6_func (vty, 0, argv[0], argv[1], argv[2], argv[3], argv[4]);
 }
-
-#ifdef HAVE_MPLS
-static int
-static_ipv6_func_mpls (struct vty *vty, int add_cmd, const char *dest,
-  const char *addr, const char *distance, const char **argv)
-{
-  struct zmpls_out_segment out;
-  int result;
-
-  memset (&out, 0, sizeof (out));
-  out.owner = ZEBRA_ROUTE_STATIC;
-  result = nhlfe_parse (vty, argv, &out, addr);
-  if (result != CMD_SUCCESS)
-    return result;
-
-  out.index = mpls_out_segment_find_index_by_nhlfe(&out);
-
-  if (add_cmd)
-  {
-    if (out.index)
-    {
-      vty_out(vty, "NHLFE already exists%s",VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-
-    if ((result = mpls_out_segment_register (&out)))
-    {
-      vty_out(vty, "Unable to register NHLFE(%d)%s",result, VTY_NEWLINE);
-      return CMD_WARNING;
-    }
-  }
-
-  result = static_ipv6_func (vty, add_cmd, dest, NULL, NULL, NULL, distance);
-
-  if (add_cmd)
-  {
-    if (result != CMD_SUCCESS)
-    {
-      mpls_out_segment_unregister_by_index (out.index);
-      return CMD_WARNING;
-    }
-  }
-  else
-  {
-    mpls_out_segment_unregister_by_index (out.index);
-  }
-  return CMD_SUCCESS;
-}
-
-DEFUN (ipv6_route_mpls,
-       ipv6_route_mpls_cmd,
-       "ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n")
-{
-  return static_ipv6_func_mpls (vty, 1, argv[0], NULL, NULL, &argv[1]);
-}
-
-DEFUN (ipv6_route_mpls_addr,
-       ipv6_route_mpls_addr_cmd,
-       "ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n"
-       "IPv6 gateway address\n")
-{
-  return static_ipv6_func_mpls (vty, 1, argv[0], argv[4], NULL, &argv[1]);
-}
-
-DEFUN (ipv6_route_mpls_pref,
-       ipv6_route_mpls_pref_cmd,
-       "ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE <1-255>",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n"
-       "Distance value for this prefix\n")
-{
-  return static_ipv6_func_mpls (vty, 1, argv[0], NULL, argv[4], &argv[1]);
-}
-
-DEFUN (ipv6_route_mpls_pref_addr,
-       ipv6_route_mpls_pref_addr_cmd,
-       "ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR <1-255>",
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n"
-       "IPv6 gateway address\n"
-       "Distance value for this prefix\n")
-{
-  return static_ipv6_func_mpls (vty, 1, argv[0], argv[4], argv[5], &argv[1]);
-}
-
-DEFUN (no_ipv6_route_mpls,
-       no_ipv6_route_mpls_cmd,
-       "no ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n")
-{
-  return static_ipv6_func_mpls (vty, 0, argv[0], NULL, NULL, &argv[1]);
-}
-
-DEFUN (no_ipv6_route_mpls_addr,
-       no_ipv6_route_mpls_addr_cmd,
-       "no ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n"
-       "IPv6 gateway address\n")
-{
-  return static_ipv6_func_mpls (vty, 0, argv[0], argv[4], NULL, &argv[1]);
-}
-
-DEFUN (no_ipv6_route_mpls_pref,
-       no_ipv6_route_mpls_pref_cmd,
-       "no ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE <1-255>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n"
-       "Distance value for this prefix\n")
-{
-  return static_ipv6_func_mpls (vty, 0, argv[0], NULL, argv[4], &argv[1]);
-}
-
-DEFUN (no_ipv6_route_mpls_pref_addr,
-       no_ipv6_route_mpls_pref_addr_cmd,
-       "no ipv6 route X:X::X:X/M (gen|atm|fr) VALUE nexthop INTERFACE ADDR <1-255>",
-       NO_STR
-       IP_STR
-       "Establish static routes\n"
-       "IPv6 destination prefix (e.g. 3ffe:506::/32)\n"
-       "Out-going generic MPLS label (16 - 2^20-1)\n"
-       "Out-going ATM MPLS label (VPI/VCI)\n"
-       "Out-going Frame Relay MPLS label (16 - 2^17-1)\n"
-       "Out-going label value\n"
-       "Nexthop\n"
-       "IPv6 gateway interface name\n"
-       "IPv6 gateway address\n"
-       "Distance value for this prefix\n")
-{
-  return static_ipv6_func_mpls (vty, 0, argv[0], argv[4], argv[5], &argv[1]);
-}
-#endif /* HAVE_MPLS */
 
 /* New RIB.  Detailed information for IPv6 route. */
 static void
@@ -2649,63 +1554,32 @@ vty_show_ipv6_route_detail (struct vty *vty, struct route_node *rn)
 
       for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
 	{
-           if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_IGNORE))
-              continue;
-
 	  vty_out (vty, "  %c",
 		   CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB) ? '*' : ' ');
 
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
+	  switch (nexthop->type)
 	    {
+	    case NEXTHOP_TYPE_IPV6:
+	    case NEXTHOP_TYPE_IPV6_IFINDEX:
+	    case NEXTHOP_TYPE_IPV6_IFNAME:
 	      vty_out (vty, " %s",
 		       inet_ntop (AF_INET6, &nexthop->gate.ipv6, buf, BUFSIZ));
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
+	      if (nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME)
 		vty_out (vty, ", %s", nexthop->ifname);
 	      else if (nexthop->ifindex)
 		vty_out (vty, ", via %s", ifindex2ifname (nexthop->ifindex));
-	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	    {
+	      break;
+	    case NEXTHOP_TYPE_IFINDEX:
 	      vty_out (vty, " directly connected, %s",
 		       ifindex2ifname (nexthop->ifindex));
-	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	    {
+	      break;
+	    case NEXTHOP_TYPE_IFNAME:
 	      vty_out (vty, " directly connected, %s",
 		       nexthop->ifname);
+	      break;
+	    default:
+	      break;
 	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_DROP))
-	    {
-	      switch (nexthop->drop)
-		{
-		  case ZEBRA_DROP_NULL:
-		    vty_out (vty, " directly connected, Null0");
-		    break;
-		  case ZEBRA_DROP_REJECT:
-		    vty_out (vty, ", reject");
-		    break;
-		  case ZEBRA_DROP_BLACKHOLE:
-		    vty_out (vty, ", blackhole");
-		    break;
-		  default:
-		    assert(0);
-		}
-	    }
-#ifdef HAVE_MPLS
-          if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_MPLS))
-            {
-              struct zmpls_out_segment *out;
-              char buf[16];
-
-              out = mpls_out_segment_find(nexthop->mpls);
-              if (out)
-                mpls_print_label(&out->nh.mpls, buf);
-              else
-                strcpy(buf, "not found");
-              vty_out (vty, " (label %s)", buf);
-           }
-#endif
-
 	  if (! CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
 	    vty_out (vty, " inactive");
 
@@ -2713,38 +1587,26 @@ vty_show_ipv6_route_detail (struct vty *vty, struct route_node *rn)
 	    {
 	      vty_out (vty, " (recursive");
 		
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
+	      switch (nexthop->rtype)
 		{
-		  vty_out (vty, " via %s",
+		case NEXTHOP_TYPE_IPV6:
+		case NEXTHOP_TYPE_IPV6_IFINDEX:
+		case NEXTHOP_TYPE_IPV6_IFNAME:
+		  vty_out (vty, " via %s)",
 			   inet_ntop (AF_INET6, &nexthop->rgate.ipv6,
 				      buf, BUFSIZ));
 		  if (nexthop->rifindex)
 		    vty_out (vty, ", %s", ifindex2ifname (nexthop->rifindex));
-		  vty_out (vty, ")");
-		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
-		{
+		  break;
+		case NEXTHOP_TYPE_IFINDEX:
+		case NEXTHOP_TYPE_IFNAME:
 		  vty_out (vty, " is directly connected, %s)",
 			   ifindex2ifname (nexthop->rifindex));
+		  break;
+		default:
+		  break;
 		}
-#ifdef HAVE_MPLS
-              if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_MPLS))
-                {
-                  struct zmpls_out_segment *out;
-                  char buf[16];
-
-                  out = mpls_out_segment_find(nexthop->rmpls);
-                  if (out)
-                    mpls_print_label(&out->nh.mpls, buf);
-                  else
-                    strcpy(buf, "not found");
-                  vty_out (vty, " (label %s)", buf);
-                }
-#endif
 	    }
-          if (nexthop->advmss)
-            vty_out (vty, " advmss %d", nexthop->advmss);
-
 	  vty_out (vty, "%s", VTY_NEWLINE);
 	}
       vty_out (vty, "%s", VTY_NEWLINE);
@@ -2762,12 +1624,8 @@ vty_show_ipv6_route (struct vty *vty, struct route_node *rn,
   /* Nexthop information. */
   for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
     {
-      if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_IGNORE))
-         continue;
-
       if (nexthop == rib->nexthop)
 	{
-
 	  /* Prefix information. */
 	  len = vty_out (vty, "%c%c%c %s/%d",
 			 zebra_route_char (rib->type),
@@ -2790,40 +1648,29 @@ vty_show_ipv6_route (struct vty *vty, struct route_node *rn,
 		 ? '*' : ' ',
 		 len - 3, ' ');
 
-      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
+      switch (nexthop->type)
 	{
+	case NEXTHOP_TYPE_IPV6:
+	case NEXTHOP_TYPE_IPV6_IFINDEX:
+	case NEXTHOP_TYPE_IPV6_IFNAME:
 	  vty_out (vty, " via %s",
 		   inet_ntop (AF_INET6, &nexthop->gate.ipv6, buf, BUFSIZ));
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
+	  if (nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME)
 	    vty_out (vty, ", %s", nexthop->ifname);
 	  else if (nexthop->ifindex)
 	    vty_out (vty, ", %s", ifindex2ifname (nexthop->ifindex));
-	}
-      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	{
+	  break;
+	case NEXTHOP_TYPE_IFINDEX:
 	  vty_out (vty, " is directly connected, %s",
 		   ifindex2ifname (nexthop->ifindex));
-	}
-      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	{
+	  break;
+	case NEXTHOP_TYPE_IFNAME:
 	  vty_out (vty, " is directly connected, %s",
 		   nexthop->ifname);
+	  break;
+	default:
+	  break;
 	}
-#ifdef HAVE_MPLS
-      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_MPLS))
-        {
-          struct zmpls_out_segment *out;
-          char buf[16];
-
-          out = mpls_out_segment_find(nexthop->mpls);
-          if (out)
-            mpls_print_label(&out->nh.mpls, buf);
-          else
-            strcpy(buf, "not found");
-          vty_out (vty, " (label %s)", buf);
-       }
-#endif
-
       if (! CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_ACTIVE))
 	vty_out (vty, " inactive");
 
@@ -2831,57 +1678,32 @@ vty_show_ipv6_route (struct vty *vty, struct route_node *rn,
 	{
 	  vty_out (vty, " (recursive");
 		
-	  if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
+	  switch (nexthop->rtype)
 	    {
-	      vty_out (vty, " via %s",
+	    case NEXTHOP_TYPE_IPV6:
+	    case NEXTHOP_TYPE_IPV6_IFINDEX:
+	    case NEXTHOP_TYPE_IPV6_IFNAME:
+	      vty_out (vty, " via %s)",
 		       inet_ntop (AF_INET6, &nexthop->rgate.ipv6,
 				  buf, BUFSIZ));
 	      if (nexthop->rifindex)
 		vty_out (vty, ", %s", ifindex2ifname (nexthop->rifindex));
-	      vty_out (vty, ")");
-	    }
-	  else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFINDEX))
-	    {
+	      break;
+	    case NEXTHOP_TYPE_IFINDEX:
+	    case NEXTHOP_TYPE_IFNAME:
 	      vty_out (vty, " is directly connected, %s)",
 		       ifindex2ifname (nexthop->rifindex));
+	      break;
+	    default:
+	      break;
 	    }
-	  else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_DROP))
-	    {
-	      switch (nexthop->drop)
-		{
-		  case ZEBRA_DROP_NULL:
-		    vty_out (vty, " directly connected, Null0");
-		    break;
-		  case ZEBRA_DROP_REJECT:
-		    vty_out (vty, ", reject");
-		    break;
-		  case ZEBRA_DROP_BLACKHOLE:
-		    vty_out (vty, ", blackhole");
-		    break;
-		  default:
-		    assert(0);
-		}
-	    }
-#ifdef HAVE_MPLS
-	  if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_MPLS))
-            {
-              struct zmpls_out_segment *out;
-              char buf[16];
-
-              out = mpls_out_segment_find(nexthop->rmpls);
-              if (out)
-                mpls_print_label(&out->nh.mpls, buf);
-              else
-                strcpy(buf, "not found");
-              vty_out (vty, " (label %s)", buf);
-           }
-#endif
 	}
 
-
-      if (nexthop->advmss)
-	vty_out (vty, " advmss %d", nexthop->advmss);
-
+      if (CHECK_FLAG (rib->flags, ZEBRA_FLAG_BLACKHOLE))
+       vty_out (vty, ", bh");
+      if (CHECK_FLAG (rib->flags, ZEBRA_FLAG_REJECT))
+       vty_out (vty, ", rej");
+      
       if (rib->type == ZEBRA_ROUTE_RIPNG
 	  || rib->type == ZEBRA_ROUTE_OSPF6
 	  || rib->type == ZEBRA_ROUTE_ISIS
@@ -2908,7 +1730,6 @@ vty_show_ipv6_route (struct vty *vty, struct route_node *rn,
 		     tm->tm_yday/7,
 		     tm->tm_yday - ((tm->tm_yday/7) * 7), tm->tm_hour);
 	}
-
       vty_out (vty, "%s", VTY_NEWLINE);
     }
 }
@@ -3021,8 +1842,6 @@ DEFUN (show_ipv6_route_protocol,
     type = ZEBRA_ROUTE_RIPNG;
   else if (strncmp (argv[0], "s", 1) == 0)
     type = ZEBRA_ROUTE_STATIC;
-  else if (strncmp (argv[0], "l", 1) == 0)
-    type = ZEBRA_ROUTE_LDP;
   else 
     {
       vty_out (vty, "Unknown route type%s", VTY_NEWLINE);
@@ -3129,7 +1948,7 @@ static int
 static_config_ipv6 (struct vty *vty)
 {
   struct route_node *rn;
-  struct static_route *si;  
+  struct static_ipv6 *si;  
   int write;
   char buf[BUFSIZ];
   struct route_table *stable;
@@ -3148,39 +1967,28 @@ static_config_ipv6 (struct vty *vty)
 		 inet_ntop (AF_INET6, &rn->p.u.prefix6, buf, BUFSIZ),
 		 rn->p.prefixlen);
 
-        if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_DROP))
-	  switch(si->nh.gw.drop)
-	    {
-	      case ZEBRA_DROP_NULL:
-		vty_out (vty, " Null0");
-		break;
-	      case ZEBRA_DROP_REJECT:
-		vty_out (vty, " %s", "reject");
-		break;
-	      case ZEBRA_DROP_BLACKHOLE:
-		vty_out (vty, " %s", "blackhole");
-		break;
-	      default:
-		assert(0);
-	    }
-	else
+	switch (si->type)
 	  {
-	    if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_IPV6))
-	      vty_out (vty, " %s", inet_ntop (AF_INET6, &si->nh.gw.ipv6,buf,BUFSIZ));
-	    if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_IFNAME))
-	      vty_out (vty, " %s", si->nh.intf.name);
-#ifdef HAVE_MPLS
-	    if (CHECK_FLAG(si->nh.type, ZEBRA_NEXTHOP_MPLS))
-	      vty_out (vty, " 0x%08x", si->nh.mpls);
-#endif
+	  case STATIC_IPV6_GATEWAY:
+	    vty_out (vty, " %s", inet_ntop (AF_INET6, &si->ipv6, buf, BUFSIZ));
+	    break;
+	  case STATIC_IPV6_IFNAME:
+	    vty_out (vty, " %s", si->ifname);
+	    break;
+	  case STATIC_IPV6_GATEWAY_IFNAME:
+	    vty_out (vty, " %s %s",
+		     inet_ntop (AF_INET6, &si->ipv6, buf, BUFSIZ), si->ifname);
+	    break;
 	  }
+
+       if (CHECK_FLAG(si->flags, ZEBRA_FLAG_REJECT))
+               vty_out (vty, " %s", "reject");
+
+       if (CHECK_FLAG(si->flags, ZEBRA_FLAG_BLACKHOLE))
+               vty_out (vty, " %s", "blackhole");
 
 	if (si->distance != ZEBRA_STATIC_DISTANCE_DEFAULT)
 	  vty_out (vty, " %d", si->distance);
-
-        if (si->nh.advmss)
-	  vty_out (vty, " advmss %d", si->nh.advmss);
-
 	vty_out (vty, "%s", VTY_NEWLINE);
 
 	write = 1;
@@ -3262,37 +2070,6 @@ zebra_vty_init (void)
   install_element (CONFIG_NODE, &no_ip_route_mask_flags_distance_cmd);
   install_element (CONFIG_NODE, &no_ip_route_mask_flags_distance2_cmd);
 
-  install_element (CONFIG_NODE, &ip_route_advmss_cmd);
-  install_element (CONFIG_NODE, &ip_route_mask_advmss_cmd);
-  install_element (CONFIG_NODE, &ip_route_distance_advmss_cmd);
-  install_element (CONFIG_NODE, &ip_route_mask_distance_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mask_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_distance_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mask_distance_advmss_cmd);
-#ifdef HAVE_MPLS
-  install_element (CONFIG_NODE, &ip_route_mpls_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_addr_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_mask_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_mask_addr_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_distance_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_distance_addr_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_mask_distance_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_mask_distance_addr_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_addr_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_mask_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_mask_addr_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_distance_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_distance_addr_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_mask_distance_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_mask_distance_addr_cmd);
-
-  install_element (CONFIG_NODE, &ip_route_mpls_advmss_cmd);
-  install_element (CONFIG_NODE, &ip_route_mpls_addr_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ip_route_mpls_addr_advmss_cmd);
-#endif /* HAVE_MPLS */
   install_element (VIEW_NODE, &show_ip_route_cmd);
   install_element (VIEW_NODE, &show_ip_route_addr_cmd);
   install_element (VIEW_NODE, &show_ip_route_prefix_cmd);
@@ -3328,29 +2105,11 @@ zebra_vty_init (void)
   install_element (CONFIG_NODE, &no_ipv6_route_flags_pref_cmd);
   install_element (CONFIG_NODE, &no_ipv6_route_ifname_pref_cmd);
   install_element (CONFIG_NODE, &no_ipv6_route_ifname_flags_pref_cmd);
-  install_element (CONFIG_NODE, &ipv6_route_advmss_cmd);
-  install_element (CONFIG_NODE, &ipv6_route_ifname_advmss_cmd);
-  install_element (CONFIG_NODE, &ipv6_route_pref_advmss_cmd);
-  install_element (CONFIG_NODE, &ipv6_route_ifname_pref_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_ifname_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_pref_advmss_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_ifname_pref_advmss_cmd);
   install_element (VIEW_NODE, &show_ipv6_route_cmd);
   install_element (VIEW_NODE, &show_ipv6_route_protocol_cmd);
   install_element (VIEW_NODE, &show_ipv6_route_addr_cmd);
   install_element (VIEW_NODE, &show_ipv6_route_prefix_cmd);
   install_element (VIEW_NODE, &show_ipv6_route_prefix_longer_cmd);
-#ifdef HAVE_MPLS
-  install_element (CONFIG_NODE, &ipv6_route_mpls_cmd);
-  install_element (CONFIG_NODE, &ipv6_route_mpls_addr_cmd);
-  install_element (CONFIG_NODE, &ipv6_route_mpls_pref_cmd);
-  install_element (CONFIG_NODE, &ipv6_route_mpls_pref_addr_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_mpls_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_mpls_addr_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_mpls_pref_cmd);
-  install_element (CONFIG_NODE, &no_ipv6_route_mpls_pref_addr_cmd);
-#endif /* HAVE_MPLS */
   install_element (ENABLE_NODE, &show_ipv6_route_cmd);
   install_element (ENABLE_NODE, &show_ipv6_route_protocol_cmd);
   install_element (ENABLE_NODE, &show_ipv6_route_addr_cmd);

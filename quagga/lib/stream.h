@@ -162,8 +162,6 @@ extern int stream_putq_at (struct stream *, size_t, uint64_t);
 extern int stream_put_ipv4 (struct stream *, u_int32_t);
 extern int stream_put_in_addr (struct stream *, struct in_addr *);
 extern int stream_put_prefix (struct stream *, struct prefix *);
-extern int stream_putf (struct stream *, float);
-extern int stream_putf_at (struct stream *, size_t, float);
 
 extern void stream_get (void *, struct stream *, size_t);
 extern u_char stream_getc (struct stream *);
@@ -175,8 +173,6 @@ extern u_int32_t stream_getl_from (struct stream *, size_t);
 extern uint64_t stream_getq (struct stream *);
 extern uint64_t stream_getq_from (struct stream *, size_t);
 extern u_int32_t stream_get_ipv4 (struct stream *);
-extern float stream_getf (struct stream *);
-extern float stream_getf_from (struct stream *, size_t);
 
 #undef stream_read
 #undef stream_write
@@ -221,8 +217,5 @@ extern struct stream *stream_fifo_pop (struct stream_fifo *fifo);
 extern struct stream *stream_fifo_head (struct stream_fifo *fifo);
 extern void stream_fifo_clean (struct stream_fifo *fifo);
 extern void stream_fifo_free (struct stream_fifo *fifo);
-
-extern void htonf (float *src, float *dst);
-extern void ntohf (float *src, float *dst);
 
 #endif /* _ZEBRA_STREAM_H */

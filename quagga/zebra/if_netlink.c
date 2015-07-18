@@ -22,7 +22,8 @@
 
 #include <zebra.h>
 
-#include "zebra/rt_netlink.h"
+/* Extern from rt_netlink.c */  
+void interface_lookup_netlink ();  
 
 /* Interface information read by netlink. */
 void

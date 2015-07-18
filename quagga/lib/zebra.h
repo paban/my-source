@@ -159,16 +159,11 @@ typedef int socklen_t;
 #include <net/route.h>
 #endif /* HAVE_NET_ROUTE_H */
 
-#undef __STRICT_ANSI__
-
 #ifdef HAVE_NETLINK
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/filter.h>
 #include <stddef.h>
-#if defined(HAVE_MPLS) && defined(LINUX_MPLS)
-#include <linux/genetlink.h>
-#endif
 #else
 #define RT_TABLE_MAIN		0
 #endif /* HAVE_NETLINK */
@@ -418,17 +413,7 @@ struct in_pktinfo
 #define ZEBRA_ROUTER_ID_ADD               20
 #define ZEBRA_ROUTER_ID_DELETE            21
 #define ZEBRA_ROUTER_ID_UPDATE            22
-#define ZEBRA_MPLS_XC_ADD                 23
-#define ZEBRA_MPLS_XC_DELETE              24
-#define ZEBRA_MPLS_IN_SEGMENT_ADD         25
-#define ZEBRA_MPLS_IN_SEGMENT_DELETE      26
-#define ZEBRA_MPLS_OUT_SEGMENT_ADD        27
-#define ZEBRA_MPLS_OUT_SEGMENT_DELETE     28
-#define ZEBRA_MPLS_LABELSPACE_ADD         29
-#define ZEBRA_MPLS_LABELSPACE_DELETE      30
-#define ZEBRA_MPLS_FTN_ADD                31
-#define ZEBRA_MPLS_FTN_DELETE             32
-#define ZEBRA_MESSAGE_MAX                 33
+#define ZEBRA_MESSAGE_MAX                 23
 
 /* Marker value used in new Zserv, in the byte location corresponding
  * the command value in the old zserv header. To allow old and new
@@ -448,10 +433,7 @@ struct in_pktinfo
 #define ZEBRA_ROUTE_ISIS                 8
 #define ZEBRA_ROUTE_BGP                  9
 #define ZEBRA_ROUTE_HSLS		 10
-#define ZEBRA_ROUTE_LDP                  11
-#define ZEBRA_ROUTE_RSVP                 12
-#define ZEBRA_ROUTE_TE                   13
-#define ZEBRA_ROUTE_MAX                  14
+#define ZEBRA_ROUTE_MAX                  11
 
 /* Note: whenever a new route-type or zserv-command is added the
  * corresponding {command,route}_types[] table in lib/log.c MUST be
@@ -490,29 +472,17 @@ extern const char *zserv_command_string (unsigned int command);
 #define ZEBRA_FLAG_CHANGED            0x20
 #define ZEBRA_FLAG_STATIC             0x40
 #define ZEBRA_FLAG_REJECT             0x80
-#define ZEBRA_FLAG_CHANGED_MPLS      0x100
-
-/*
- * REJECT and BLACKHOLE flags should never be set by
- * anything except nexthop_active_check(), instead create
- * a nexthop * with flag ZEBRA_NEXTHOP_DROP and set the
- * drop field to one of the ZEBRA_DROP_* values below.
- */
 
 /* Zebra nexthop flags. */
-#define ZEBRA_NEXTHOP_IFINDEX            0x01
-#define ZEBRA_NEXTHOP_IFNAME             0x02
-#define ZEBRA_NEXTHOP_IPV4               0x04
-#define ZEBRA_NEXTHOP_IPV6               0x08
-#define ZEBRA_NEXTHOP_DROP               0x10
-#define ZEBRA_NEXTHOP_SRC_IPV4           0x20
-#define ZEBRA_NEXTHOP_SRC_IPV6           0x40
-#define ZEBRA_NEXTHOP_MPLS               0x80
-#define ZEBRA_NEXTHOP_ALL                0xFF
-
-#define ZEBRA_DROP_BLACKHOLE             1
-#define ZEBRA_DROP_REJECT                2
-#define ZEBRA_DROP_NULL                  3
+#define ZEBRA_NEXTHOP_IFINDEX            1
+#define ZEBRA_NEXTHOP_IFNAME             2
+#define ZEBRA_NEXTHOP_IPV4               3
+#define ZEBRA_NEXTHOP_IPV4_IFINDEX       4
+#define ZEBRA_NEXTHOP_IPV4_IFNAME        5
+#define ZEBRA_NEXTHOP_IPV6               6
+#define ZEBRA_NEXTHOP_IPV6_IFINDEX       7
+#define ZEBRA_NEXTHOP_IPV6_IFNAME        8
+#define ZEBRA_NEXTHOP_BLACKHOLE          9
 
 #ifndef INADDR_LOOPBACK
 #define	INADDR_LOOPBACK	0x7f000001	/* Internet address 127.0.0.1.  */

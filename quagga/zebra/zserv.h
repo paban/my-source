@@ -25,9 +25,6 @@
 #include "rib.h"
 #include "if.h"
 #include "workqueue.h"
-#ifdef HAVE_MPLS
-#include "mpls_lib.h"
-#endif
 
 /* Default port information. */
 #define ZEBRA_VTY_PORT                2601
@@ -98,10 +95,6 @@ extern void interface_list (void);
 extern void kernel_init (void);
 extern void route_read (void);
 extern void zebra_route_map_init (void);
-#ifdef HAVE_MPLS
-extern void mpls_kernel_init (void);
-extern void mpls_read (void);
-#endif
 extern void zebra_snmp_init (void);
 extern void zebra_vty_init (void);
 
@@ -113,38 +106,6 @@ extern int zsend_interface_update (int, struct zserv *, struct interface *);
 extern int zsend_route_multipath (int, struct zserv *, struct prefix *, 
                                   struct rib *);
 extern int zsend_router_id_update(struct zserv *, struct prefix *);
-
-#ifdef HAVE_MPLS
-int
-zsend_mpls_xc_add (struct zserv *client, struct zmpls_xc *p);
-
-int
-zsend_mpls_xc_delete (struct zserv *client, struct zmpls_xc *p);
-
-int
-zsend_mpls_in_segment_add (struct zserv *client, struct zmpls_in_segment *p);
-
-int
-zsend_mpls_in_segment_delete (struct zserv *client, struct zmpls_in_segment *p);
-
-int
-zsend_mpls_out_segment_add (struct zserv *client, struct zmpls_out_segment *p);
-
-int
-zsend_mpls_out_segment_delete (struct zserv *client, struct zmpls_out_segment *p);
-
-int
-zsend_mpls_labelspace_add (struct zserv *client, struct interface *ifp);
-
-int
-zsend_mpls_labelspace_delete (struct zserv *client, struct interface *ifp);
-
-int
-zsend_mpls_ftn_add (struct zserv *client, struct zmpls_ftn *ftn);
-
-int
-zsend_mpls_ftn_delete (struct zserv *client, struct zmpls_ftn *ftn);
-#endif
 
 extern pid_t pid;
 

@@ -39,7 +39,6 @@
 #include "zebra/router-id.h"
 #include "zebra/irdp.h"
 #include "zebra/rtadv.h"
-#include "zebra/interface.h"
 
 /* Zebra instance */
 struct zebra_t zebrad =
@@ -170,9 +169,6 @@ sigint (void)
 
   if (!retain_mode)
     rib_close ();
-#ifdef HAVE_MPLS
-  mpls_close ();
-#endif
 #ifdef HAVE_IRDP
   irdp_finish();
 #endif
@@ -324,24 +320,16 @@ main (int argc, char **argv)
   /* Zebra related initialize. */
   zebra_init ();
   rib_init ();
-#ifdef HAVE_MPLS
-  mpls_init ();
-#endif
   zebra_if_init ();
   zebra_debug_init ();
   router_id_init();
   zebra_vty_init ();
-#ifdef HAVE_MPLS
-  mpls_vty_init ();
-#endif
   access_list_init ();
   prefix_list_init ();
   rtadv_init ();
 #ifdef HAVE_IRDP
   irdp_init();
 #endif
-  if_vlan_init();
-  if_tunnel_init();
 
   /* For debug purpose. */
   /* SET_FLAG (zebra_debug_event, ZEBRA_DEBUG_EVENT); */
@@ -350,10 +338,6 @@ main (int argc, char **argv)
   kernel_init ();
   interface_list ();
   route_read ();
-#ifdef HAVE_MPLS
-  mpls_kernel_init ();
-  mpls_read ();
-#endif
 
   /* Sort VTY commands. */
   sort_node ();

@@ -57,7 +57,6 @@ struct vtysh_client
   { .fd = -1, .name = "ospf6d", .flag = VTYSH_OSPF6D, .path = OSPF6_VTYSH_PATH},
   { .fd = -1, .name = "bgpd", .flag = VTYSH_BGPD, .path = BGP_VTYSH_PATH},
   { .fd = -1, .name = "isisd", .flag = VTYSH_ISISD, .path = ISIS_VTYSH_PATH},
-  { .fd = -1, .name = "ldpd", .flag = VTYSH_LDPD, .path = LDP_VTYSH_PATH},
 };
 
 #define VTYSH_INDEX_MAX (sizeof(vtysh_client)/sizeof(vtysh_client[0]))
@@ -729,42 +728,10 @@ struct cmd_node isis_node =
   "%s(config-router)# ",
 };
 
-/* LDP node structure. */
-struct cmd_node mpls_ldp_node =
-{
-  LDP_NODE,
-  "%s(config-ldp)# ",
-};
-
-/* MPLS labelspace node structure. */
-struct cmd_node mpls_static_node =
-{
-  MPLS_LABELSPACE_NODE,
-  "%s(config-ls)# ",
-};
-
-struct cmd_node tunnel_node =
-{
-  TUNNEL_NODE,
-  "%s(config-tun)# ",
-};
-
-struct cmd_node mpls_tunnel_node =
-{
-  MPLS_TUNNEL_NODE,
-  "%s(config-tun)# ",
-};
-
 struct cmd_node interface_node =
 {
   INTERFACE_NODE,
   "%s(config-if)# ",
-};
-
-struct cmd_node ldp_if_node =
-{
-  LDP_IF_NODE,
-  "%s(config-if-ldp)# ",
 };
 
 struct cmd_node rmap_node =
@@ -985,18 +952,6 @@ DEFUNSH (VTYSH_RIPD,
   return CMD_SUCCESS;
 }
 
-DEFUNSH (VTYSH_ZEBRA,
-	 mpls_static,
-	 mpls_static_cmd,
-	 "mpls static <0-255>",
-	 "Multi-Protocol Label Switching configuration\n"
-	 "Static label information"
-	 "Labelspace number (0 = global)")
-{
-  vty->node = MPLS_LABELSPACE_NODE;
-  return CMD_SUCCESS;
-}
-
 DEFUNSH (VTYSH_RIPD,
 	 router_rip,
 	 router_rip_cmd,
@@ -1050,28 +1005,6 @@ DEFUNSH (VTYSH_ISISD,
 	 "ISO Routing area tag")
 {
   vty->node = ISIS_NODE;
-  return CMD_SUCCESS;
-}
-
-DEFUNSH (VTYSH_LDPD,
-	 vtysh_mpls_ldp,
-	 vtysh_mpls_ldp_cmd,
-	 "mpls ldp",
-	 "Multi-Protocol Label Switching configuration\n"
-	 "Dynamic label distribution configuration")
-{
-  vty->node = LDP_NODE;
-  return CMD_SUCCESS;
-}
-
-DEFUNSH (VTYSH_LDPD,
-	 vtysh_mpls_ip,
-	 vtysh_mpls_ip_cmd,
-	 "mpls ip",
-	 "MPLS interface configuration\n"
-	 "Dynamic label distribution via LDP\n")
-{
-  vty->node = LDP_IF_NODE;
   return CMD_SUCCESS;
 }
 
@@ -1145,13 +1078,9 @@ vtysh_exit (struct vty *vty)
       vty->node = ENABLE_NODE;
       break;
     case INTERFACE_NODE:
-    case TUNNEL_NODE:
-    case MPLS_TUNNEL_NODE:
     case ZEBRA_NODE:
     case BGP_NODE:
     case RIP_NODE:
-    case LDP_NODE:
-    case MPLS_LABELSPACE_NODE:
     case RIPNG_NODE:
     case OSPF_NODE:
     case OSPF6_NODE:
@@ -1173,9 +1102,6 @@ vtysh_exit (struct vty *vty)
       break;
     case KEYCHAIN_KEY_NODE:
       vty->node = KEYCHAIN_NODE;
-      break;
-    case LDP_IF_NODE:
-      vty->node = INTERFACE_NODE;
       break;
     default:
       break;
@@ -1225,21 +1151,6 @@ ALIAS (vtysh_exit_zebra,
        vtysh_quit_zebra_cmd,
        "quit",
        "Exit current mode and down to previous mode\n")
-
-DEFUNSH (VTYSH_ZEBRA,
-	 vtysh_exit_mpls_ls,
-	 vtysh_exit_mpls_ls_cmd,
-	 "exit",
-	 "Exit current mode and down to previous mode\n")
-{
-  return vtysh_exit (vty);
-}
-
-ALIAS (vtysh_exit_mpls_ls,
-       vtysh_quit_mpls_ls_cmd,
-       "quit",
-       "Exit current mode and down to previous mode\n")
-
 
 DEFUNSH (VTYSH_RIPD,
 	 vtysh_exit_ripd,
@@ -1339,34 +1250,6 @@ ALIAS (vtysh_exit_isisd,
        "quit",
        "Exit current mode and down to previous mode\n")
 
-DEFUNSH (VTYSH_LDPD,
-	 vtysh_exit_ldpd,
-	 vtysh_exit_ldpd_cmd,
-	 "exit",
-	 "Exit current mode and down to previous mode\n")
-{
-  return vtysh_exit (vty);
-}
-
-ALIAS (vtysh_exit_ldpd,
-       vtysh_quit_ldpd_cmd,
-       "quit",
-       "Exit current mode and down to previous mode\n")
-
-DEFUNSH (VTYSH_LDPD,
-	 vtysh_exit_ldp_if,
-	 vtysh_exit_ldp_if_cmd,
-	 "exit",
-	 "Exit current mode and down to previous mode\n")
-{
-  return vtysh_exit (vty);
-}
-
-ALIAS (vtysh_exit_ldp_if,
-       vtysh_quit_ldp_if_cmd,
-       "quit",
-       "Exit current mode and down to previous mode\n")
-
 DEFUNSH (VTYSH_ALL,
          vtysh_exit_line_vty,
          vtysh_exit_line_vty_cmd,
@@ -1380,52 +1263,6 @@ ALIAS (vtysh_exit_line_vty,
        vtysh_quit_line_vty_cmd,
        "quit",
        "Exit current mode and down to previous mode\n")
-
-DEFUNSH (VTYSH_ZEBRA,
-	 vtysh_exit_tunnel,
-	 vtysh_exit_tunnel_cmd,
-	 "exit",
-	 "Exit current mode and down to previous mode\n")
-{
-  return vtysh_exit (vty);
-}
-
-ALIAS (vtysh_exit_tunnel,
-       vtysh_quit_tunnel_cmd,
-       "quit",
-       "Exit current mode and down to previous mode\n")
-
-DEFUNSH (VTYSH_ZEBRA,
-	 vtysh_tunnel,
-	 vtysh_tunnel_cmd,
-	 "create tunnel IFNAME",
-	 "Create virtual interfaces\n"
-	 "Create a tunnel interface\n"
-	 "Interface's name\n")
-{
-  vty->node = TUNNEL_NODE;
-  return CMD_SUCCESS;
-}
-
-DEFUNSH (VTYSH_ZEBRA,
-	 vtysh_tunnel_mode_mpls,
-	 vtysh_tunnel_mode_mpls_cmd,
-         "tunnel mode mpls",
-         "Tunnel configuration\n"
-         "Tunnel mode configuration\n"
-         "MPLS\n")
-{
-  vty->node = MPLS_TUNNEL_NODE;
-  return CMD_SUCCESS;
-}
-
-DEFSH (VTYSH_ZEBRA,
-       vtysh_no_tunnel_cmd,
-       "no create tunnel IFNAME",
-       NO_STR
-       "Delete a virtual interface\n"
-       "Delete a tunnel interface\n"
-       "Interface's name\n")
 
 DEFUNSH (VTYSH_INTERFACE,
 	 vtysh_interface,
@@ -2387,12 +2224,7 @@ vtysh_init_vty (void)
   /* Install nodes. */
   install_node (&bgp_node, NULL);
   install_node (&rip_node, NULL);
-  install_node (&mpls_ldp_node, NULL);
-  install_node (&mpls_static_node, NULL);
-  install_node (&tunnel_node, NULL);
-  install_node (&mpls_tunnel_node, NULL);
   install_node (&interface_node, NULL);
-  install_node (&ldp_if_node, NULL);
   install_node (&rmap_node, NULL);
   install_node (&zebra_node, NULL);
   install_node (&bgp_vpnv4_node, NULL);
@@ -2417,11 +2249,6 @@ vtysh_init_vty (void)
   vtysh_install_default (CONFIG_NODE);
   vtysh_install_default (BGP_NODE);
   vtysh_install_default (RIP_NODE);
-  vtysh_install_default (LDP_NODE);
-  vtysh_install_default (LDP_IF_NODE);
-  vtysh_install_default (MPLS_LABELSPACE_NODE);
-  vtysh_install_default (TUNNEL_NODE);
-  vtysh_install_default (MPLS_TUNNEL_NODE);
   vtysh_install_default (INTERFACE_NODE);
   vtysh_install_default (RMAP_NODE);
   vtysh_install_default (ZEBRA_NODE);
@@ -2449,16 +2276,6 @@ vtysh_init_vty (void)
   /* install_element (CONFIG_NODE, &vtysh_quit_all_cmd); */
   install_element (ENABLE_NODE, &vtysh_exit_all_cmd);
   install_element (ENABLE_NODE, &vtysh_quit_all_cmd);
-  install_element (TUNNEL_NODE, &vtysh_exit_tunnel_cmd);
-  install_element (TUNNEL_NODE, &vtysh_quit_tunnel_cmd);
-  install_element (MPLS_TUNNEL_NODE, &vtysh_exit_tunnel_cmd);
-  install_element (MPLS_TUNNEL_NODE, &vtysh_quit_tunnel_cmd);
-  install_element (MPLS_LABELSPACE_NODE, &vtysh_exit_mpls_ls_cmd);
-  install_element (MPLS_LABELSPACE_NODE, &vtysh_quit_mpls_ls_cmd);
-  install_element (LDP_NODE, &vtysh_exit_ldpd_cmd);
-  install_element (LDP_NODE, &vtysh_quit_ldpd_cmd);
-  install_element (LDP_IF_NODE, &vtysh_exit_ldpd_cmd);
-  install_element (LDP_IF_NODE, &vtysh_quit_ldpd_cmd);
   install_element (RIP_NODE, &vtysh_exit_ripd_cmd);
   install_element (RIP_NODE, &vtysh_quit_ripd_cmd);
   install_element (RIPNG_NODE, &vtysh_exit_ripngd_cmd);
@@ -2493,9 +2310,6 @@ vtysh_init_vty (void)
   /* "end" command. */
   install_element (CONFIG_NODE, &vtysh_end_all_cmd);
   install_element (ENABLE_NODE, &vtysh_end_all_cmd);
-  install_element (MPLS_LABELSPACE_NODE, &vtysh_end_all_cmd);
-  install_element (LDP_NODE, &vtysh_end_all_cmd);
-  install_element (LDP_IF_NODE, &vtysh_end_all_cmd);
   install_element (RIP_NODE, &vtysh_end_all_cmd);
   install_element (RIPNG_NODE, &vtysh_end_all_cmd);
   install_element (OSPF_NODE, &vtysh_end_all_cmd);
@@ -2511,17 +2325,12 @@ vtysh_init_vty (void)
   install_element (KEYCHAIN_KEY_NODE, &vtysh_end_all_cmd);
   install_element (RMAP_NODE, &vtysh_end_all_cmd);
   install_element (VTY_NODE, &vtysh_end_all_cmd);
-  install_element (TUNNEL_NODE, &vtysh_end_all_cmd);
-  install_element (MPLS_TUNNEL_NODE, &vtysh_end_all_cmd);
 
   install_element (INTERFACE_NODE, &interface_desc_cmd);
   install_element (INTERFACE_NODE, &no_interface_desc_cmd);
   install_element (INTERFACE_NODE, &vtysh_end_all_cmd);
   install_element (INTERFACE_NODE, &vtysh_exit_interface_cmd);
   install_element (INTERFACE_NODE, &vtysh_quit_interface_cmd);
-  install_element (INTERFACE_NODE, &vtysh_mpls_ip_cmd);
-  install_element (CONFIG_NODE, &mpls_static_cmd);
-  install_element (CONFIG_NODE, &vtysh_mpls_ldp_cmd);
   install_element (CONFIG_NODE, &router_rip_cmd);
 #ifdef HAVE_IPV6
   install_element (CONFIG_NODE, &router_ripng_cmd);
@@ -2551,10 +2360,6 @@ vtysh_init_vty (void)
   install_element (KEYCHAIN_NODE, &key_cmd);
   install_element (KEYCHAIN_NODE, &key_chain_cmd);
   install_element (KEYCHAIN_KEY_NODE, &key_chain_cmd);
-  install_element (CONFIG_NODE, &vtysh_tunnel_cmd);
-  install_element (TUNNEL_NODE, &vtysh_tunnel_mode_mpls_cmd);
-  install_element (MPLS_TUNNEL_NODE, &vtysh_tunnel_mode_mpls_cmd);
-  install_element (CONFIG_NODE, &vtysh_no_tunnel_cmd);
   install_element (CONFIG_NODE, &vtysh_interface_cmd);
   install_element (CONFIG_NODE, &vtysh_no_interface_cmd);
   install_element (ENABLE_NODE, &vtysh_show_running_config_cmd);

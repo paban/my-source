@@ -133,7 +133,6 @@ struct interface
 #ifdef HAVE_NET_RT_IFLIST
   struct if_data stats;
 #endif /* HAVE_NET_RT_IFLIST */
-  int mpls_labelspace;
 };
 
 /* Connected address structure. */
@@ -291,9 +290,6 @@ extern struct connected  *connected_delete_by_prefix (struct interface *,
                                                struct prefix *);
 extern struct connected  *connected_lookup_address (struct interface *, 
                                              struct in_addr);
-
-extern struct interface *if_getfirst();
-extern struct interface *if_getnext(struct interface*);
 
 #ifndef HAVE_IF_NAMETOINDEX
 extern unsigned int if_nametoindex (const char *);

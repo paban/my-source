@@ -339,37 +339,59 @@ ospf_zebra_add (struct prefix_ipv4 *p, struct ospf_route *or)
 {
   u_char message;
   u_char distance;
+  u_char flags;
+  int psize;
+  struct stream *s;
   struct ospf_path *path;
   struct listnode *node;
-  struct zapi_ipv4 api;
-  int count;
 
   if (zclient->redist[ZEBRA_ROUTE_OSPF])
     {
-      memset (&api, 0, sizeof (api));
+      message = 0;
+      flags = 0;
 
-      api.flags = 0;
-      api.type = ZEBRA_ROUTE_OSPF;
+      /* OSPF pass nexthop and metric */
+      SET_FLAG (message, ZAPI_MESSAGE_NEXTHOP);
+      SET_FLAG (message, ZAPI_MESSAGE_METRIC);
 
-      count = 0;
+      /* Distance value. */
+      distance = ospf_distance_apply (p, or);
+      if (distance)
+        SET_FLAG (message, ZAPI_MESSAGE_DISTANCE);
+
+      /* Make packet. */
+      s = zclient->obuf;
+      stream_reset (s);
+
+      /* Put command, type, flags, message. */
+      zclient_create_header (s, ZEBRA_IPV4_ROUTE_ADD);
+      stream_putc (s, ZEBRA_ROUTE_OSPF);
+      stream_putc (s, flags);
+      stream_putc (s, message);
+
+      /* Put prefix information. */
+      psize = PSIZE (p->prefixlen);
+      stream_putc (s, p->prefixlen);
+      stream_write (s, (u_char *) & p->prefix, psize);
+
+      /* Nexthop count. */
+      stream_putc (s, or->paths->count);
 
       /* Nexthop, ifindex, distance and metric information. */
       for (ALL_LIST_ELEMENTS_RO (or->paths, node, path))
         {
           if (path->nexthop.s_addr != INADDR_ANY)
             {
-              SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-              api.nexthop[count].type = ZEBRA_NEXTHOP_IPV4;
-              api.nexthop[count].gw.ipv4.s_addr = path->nexthop.s_addr;
+              stream_putc (s, ZEBRA_NEXTHOP_IPV4);
+              stream_put_in_addr (s, &path->nexthop);
             }
           else
             {
-              SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-              api.nexthop[count].type = ZEBRA_NEXTHOP_IFINDEX;
+              stream_putc (s, ZEBRA_NEXTHOP_IFINDEX);
               if (path->oi)
-                api.nexthop[count].intf.index = path->oi->ifp->ifindex;
+                stream_putl (s, path->oi->ifp->ifindex);
               else
-                api.nexthop[count].intf.index = 0;
+                stream_putl (s, 0);
             }
 
           if (IS_DEBUG_OSPF (zebra, ZEBRA_REDISTRIBUTE))
@@ -382,29 +404,23 @@ ospf_zebra_add (struct prefix_ipv4 *p, struct ospf_route *or)
 			 inet_ntop(AF_INET, &path->nexthop,
 				   buf[1], sizeof(buf[1])));
             }
-          count++;
         }
 
-      api.nexthop_num = count;
-
-      /* Distance value. */
-      distance = ospf_distance_apply (p, or);
-      if (distance)
+      if (CHECK_FLAG (message, ZAPI_MESSAGE_DISTANCE))
+        stream_putc (s, distance);
+      if (CHECK_FLAG (message, ZAPI_MESSAGE_METRIC))
         {
-          SET_FLAG (api.message, ZAPI_MESSAGE_DISTANCE);
-          api.distance = distance;
+          if (or->path_type == OSPF_PATH_TYPE1_EXTERNAL)
+            stream_putl (s, or->cost + or->u.ext.type2_cost);
+          else if (or->path_type == OSPF_PATH_TYPE2_EXTERNAL)
+            stream_putl (s, or->u.ext.type2_cost);
+          else
+            stream_putl (s, or->cost);
         }
 
-      /* OSPF pass metric */
-      SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
-      if (or->path_type == OSPF_PATH_TYPE1_EXTERNAL)
-        api.metric = or->cost + or->u.ext.type2_cost;
-      else if (or->path_type == OSPF_PATH_TYPE2_EXTERNAL)
-        api.metric = or->u.ext.type2_cost;
-      else
-        api.metric = or->cost;
+      stream_putw_at (s, 0, stream_get_endp (s));
 
-      zapi_ipv4_route(ZEBRA_IPV4_ROUTE_ADD, zclient, p, &api);
+      zclient_send_message(zclient);
     }
 }
 
@@ -413,32 +429,31 @@ ospf_zebra_delete (struct prefix_ipv4 *p, struct ospf_route *or)
 {
   struct zapi_ipv4 api;
   struct ospf_path *path;
+  struct in_addr *nexthop;
   struct listnode *node, *nnode;
-  int count;
 
   if (zclient->redist[ZEBRA_ROUTE_OSPF])
     {
       api.type = ZEBRA_ROUTE_OSPF;
       api.flags = 0;
       api.message = 0;
-      count = 0;
+      api.ifindex_num = 0;
+      api.nexthop_num = 0;
 
       for (ALL_LIST_ELEMENTS (or->paths, node, nnode, path))
         {
           if (path->nexthop.s_addr != INADDR_ANY)
             {
               SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-              api.nexthop[count].type = ZEBRA_NEXTHOP_IPV4;
-              api.nexthop[count].gw.ipv4.s_addr = path->nexthop.s_addr;
+              api.nexthop_num = 1;
+              nexthop = &path->nexthop;
+              api.nexthop = &nexthop;
             }
           else if (ospf_if_exists(path->oi) && (path->oi->ifp))
             {
               SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
-              api.nexthop[count].type = ZEBRA_NEXTHOP_IFINDEX;
-              if (path->oi)
-                api.nexthop[count].intf.index = path->oi->ifp->ifindex;
-              else
-                api.nexthop[count].intf.index = 0;
+              api.ifindex_num = 1;
+              api.ifindex = &path->oi->ifp->ifindex;
             }
           else if ( IS_DEBUG_OSPF(zebra,ZEBRA_REDISTRIBUTE) )
             {
@@ -447,25 +462,24 @@ ospf_zebra_delete (struct prefix_ipv4 *p, struct ospf_route *or)
                          p->prefixlen);
             }
 
-          if (IS_DEBUG_OSPF (zebra, ZEBRA_REDISTRIBUTE))
+          zapi_ipv4_route (ZEBRA_IPV4_ROUTE_DELETE, zclient, p, &api);
+
+          if (IS_DEBUG_OSPF (zebra, ZEBRA_REDISTRIBUTE) && api.nexthop_num)
             {
 	      char buf[2][INET_ADDRSTRLEN];
-	      zlog_debug("Zebra: Route delete %s/%d",
-			 inet_ntop(AF_INET, &p->prefix, buf[0],
-			 sizeof(buf[0])), p->prefixlen);
-
-              if (CHECK_FLAG (api.nexthop[count].type, ZEBRA_NEXTHOP_IPV4))
-		  zlog_debug("\tnexthop %s", inet_ntop(AF_INET,
-			     &api.nexthop[count].gw.ipv4,
-			     buf[1], sizeof(buf[1])));
-
-              if (CHECK_FLAG (api.nexthop[count].type, ZEBRA_NEXTHOP_IFINDEX))
-                zlog_debug ("\tifindex %d", api.nexthop[count].intf.index);
+	      zlog_debug("Zebra: Route delete %s/%d nexthop %s",
+			 inet_ntop(AF_INET, &p->prefix, buf[0], sizeof(buf[0])),
+			 p->prefixlen,
+			 inet_ntop(AF_INET, *api.nexthop,
+				   buf[1], sizeof(buf[1])));
             }
-          count++;
+          if (IS_DEBUG_OSPF (zebra, ZEBRA_REDISTRIBUTE) && api.ifindex_num)
+            {
+              zlog_debug ("Zebra: Route delete %s/%d ifindex %d",
+                         inet_ntoa (p->prefix),
+                         p->prefixlen, *api.ifindex);
+            }
         }
-      api.nexthop_num = count;
-      zapi_ipv4_route (ZEBRA_IPV4_ROUTE_DELETE, zclient, p, &api);
     }
 }
 
@@ -477,11 +491,11 @@ ospf_zebra_add_discard (struct prefix_ipv4 *p)
   if (zclient->redist[ZEBRA_ROUTE_OSPF])
     {
       api.type = ZEBRA_ROUTE_OSPF;
-      api.flags = 0;
-      api.message = ZAPI_MESSAGE_NEXTHOP;
-      api.nexthop_num = 1;
-      api.nexthop[0].type = ZEBRA_NEXTHOP_DROP;
-      api.nexthop[0].gw.drop = ZEBRA_DROP_BLACKHOLE;
+      api.flags = ZEBRA_FLAG_BLACKHOLE;
+      api.message = 0;
+      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
+      api.nexthop_num = 0;
+      api.ifindex_num = 0;
 
       zapi_ipv4_route (ZEBRA_IPV4_ROUTE_ADD, zclient, p, &api);
 
@@ -499,11 +513,11 @@ ospf_zebra_delete_discard (struct prefix_ipv4 *p)
   if (zclient->redist[ZEBRA_ROUTE_OSPF])
     {
       api.type = ZEBRA_ROUTE_OSPF;
-      api.flags = 0;
-      api.message = ZAPI_MESSAGE_NEXTHOP;
-      api.nexthop_num = 1;
-      api.nexthop[0].type = ZEBRA_NEXTHOP_DROP;
-      api.nexthop[0].gw.drop = ZEBRA_DROP_BLACKHOLE;
+      api.flags = ZEBRA_FLAG_BLACKHOLE;
+      api.message = 0;
+      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
+      api.nexthop_num = 0;
+      api.ifindex_num = 0;
 
       zapi_ipv4_route (ZEBRA_IPV4_ROUTE_DELETE, zclient, p, &api);
 
@@ -786,84 +800,95 @@ ospf_zebra_read_ipv4 (int command, struct zclient *zclient,
   struct prefix_ipv4 p;
   struct external_info *ei;
   struct ospf *ospf;
-  int i;
 
   s = zclient->ibuf;
+  ifindex = 0;
+  nexthop.s_addr = 0;
 
-  zapi_ipv4_read (s, length, &api, &p);
+  /* Type, flags, message. */
+  api.type = stream_getc (s);
+  api.flags = stream_getc (s);
+  api.message = stream_getc (s);
+
+  /* IPv4 prefix. */
+  memset (&p, 0, sizeof (struct prefix_ipv4));
+  p.family = AF_INET;
+  p.prefixlen = stream_getc (s);
+  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
 
   if (IPV4_NET127(ntohl(p.prefix.s_addr)))
-    return 0;
-
-  ospf = ospf_lookup ();
-  if (ospf == NULL)
     return 0;
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
     {
-      for (i = 0; i < api.nexthop_num; i++)
-        {
-          nexthop.s_addr = 0;
-          ifindex = 0;
+      api.nexthop_num = stream_getc (s);
+      nexthop.s_addr = stream_get_ipv4 (s);
+    }
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_IFINDEX))
+    {
+      api.ifindex_num = stream_getc (s);
+      /* XXX assert(api.ifindex_num == 1); */
+      ifindex = stream_getl (s);
+    }
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
+    api.distance = stream_getc (s);
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_METRIC))
+    api.metric = stream_getl (s);
 
-          if (CHECK_FLAG (api.nexthop[i].type, ZEBRA_NEXTHOP_IPV4))
-            nexthop.s_addr = api.nexthop[i].gw.ipv4.s_addr;
+  ospf = ospf_lookup ();
+  if (ospf == NULL)
+    return 0;
 
-          if (CHECK_FLAG (api.nexthop[i].type, ZEBRA_NEXTHOP_IFINDEX))
-            ifindex = api.nexthop[i].intf.index;
-
-          if (command == ZEBRA_IPV4_ROUTE_ADD)
-            {
-              /* XXX|HACK|TODO|FIXME:
-               * Maybe we should ignore reject/blackhole routes? Testing shows that
-               * there is no problems though and this is only way to "summarize"
-               * routes in ASBR at the moment. Maybe we need just a better generalised
-               * solution for these types?
-               *
-               * if ( CHECK_FLAG (api.flags, ZEBRA_FLAG_BLACKHOLE)
-               *     || CHECK_FLAG (api.flags, ZEBRA_FLAG_REJECT))
-               * return 0;
-               */
+  if (command == ZEBRA_IPV4_ROUTE_ADD)
+    {
+      /* XXX|HACK|TODO|FIXME:
+       * Maybe we should ignore reject/blackhole routes? Testing shows that
+       * there is no problems though and this is only way to "summarize"
+       * routes in ASBR at the moment. Maybe we need just a better generalised
+       * solution for these types?
+       *
+       * if ( CHECK_FLAG (api.flags, ZEBRA_FLAG_BLACKHOLE)
+       *     || CHECK_FLAG (api.flags, ZEBRA_FLAG_REJECT))
+       * return 0;
+       */
         
-              ei = ospf_external_info_add (api.type, p, ifindex, nexthop);
+      ei = ospf_external_info_add (api.type, p, ifindex, nexthop);
 
-              if (ospf->router_id.s_addr == 0)
-                /* Set flags to generate AS-external-LSA originate event
-                   for each redistributed protocols later. */
-                ospf->external_origin |= (1 << api.type);
-              else
-                {
-                  if (ei)
-                    {
-                      if (is_prefix_default (&p))
-                        ospf_external_lsa_refresh_default (ospf);
-                      else
-                        {
-                          struct ospf_lsa *current;
-
-                          current = ospf_external_info_find_lsa (ospf, &ei->p);
-                          if (!current)
-                            ospf_external_lsa_originate (ospf, ei);
-                          else if (IS_LSA_MAXAGE (current))
-                            ospf_external_lsa_refresh (ospf, current,
-                                                       ei, LSA_REFRESH_FORCE);
-                          else
-                            zlog_warn ("ospf_zebra_read_ipv4() : %s already exists",
-                                       inet_ntoa (p.prefix));
-                        }
-                    }
-                }
-            }
-          else                          /* if (command == ZEBRA_IPV4_ROUTE_DELETE) */
+      if (ospf->router_id.s_addr == 0)
+        /* Set flags to generate AS-external-LSA originate event
+           for each redistributed protocols later. */
+        ospf->external_origin |= (1 << api.type);
+      else
+        {
+          if (ei)
             {
-              ospf_external_info_delete (api.type, p);
               if (is_prefix_default (&p))
                 ospf_external_lsa_refresh_default (ospf);
               else
-                ospf_external_lsa_flush (ospf, api.type, &p, ifindex /*, nexthop */);
+                {
+                  struct ospf_lsa *current;
+
+                  current = ospf_external_info_find_lsa (ospf, &ei->p);
+                  if (!current)
+                    ospf_external_lsa_originate (ospf, ei);
+                  else if (IS_LSA_MAXAGE (current))
+                    ospf_external_lsa_refresh (ospf, current,
+                                               ei, LSA_REFRESH_FORCE);
+                  else
+                    zlog_warn ("ospf_zebra_read_ipv4() : %s already exists",
+                               inet_ntoa (p.prefix));
+                }
             }
         }
+    }
+  else                          /* if (command == ZEBRA_IPV4_ROUTE_DELETE) */
+    {
+      ospf_external_info_delete (api.type, p);
+      if (is_prefix_default (&p))
+        ospf_external_lsa_refresh_default (ospf);
+      else
+        ospf_external_lsa_flush (ospf, api.type, &p, ifindex /*, nexthop */);
     }
 
   return 0;

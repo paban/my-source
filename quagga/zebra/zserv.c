@@ -336,25 +336,6 @@ zsend_interface_update (int cmd, struct zserv *client, struct interface *ifp)
   return zebra_server_send_message(client);
 }
 
-static void
-zsend_nexthop (struct zapi_nexthop *nh, struct nexthop *nexthop)
-{
-  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_DROP))
-    nh->gw.drop = nexthop->drop;
-  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
-    nh->gw.ipv4 = nexthop->gate.ipv4;
-#ifdef HAVE_IPV6
-  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
-    memcpy (&nh->gw.ipv6, &nexthop->gate.ipv6, 16);
-#endif
-  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-    nh->intf.index = nexthop->ifindex;
-  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-    strncpy (nh->intf.name, nexthop->ifname, IFNAMSIZ);
-
-  nh->type = nexthop->type;
-}
-
 /*
  * The zebra server sends the clients  a ZEBRA_IPV4_ROUTE_ADD or a
  * ZEBRA_IPV6_ROUTE_ADD via zsend_route_multipath in the following
@@ -382,103 +363,113 @@ int
 zsend_route_multipath (int cmd, struct zserv *client, struct prefix *p,
                        struct rib *rib)
 {
+  int psize;
   struct stream *s;
-  int nhnum;
   struct nexthop *nexthop;
+  unsigned long nhnummark = 0, messmark = 0;
+  int nhnum = 0;
   u_char zapi_flags = 0;
+  
   s = client->obuf;
+  stream_reset (s);
+  
+  zserv_create_header (s, cmd);
+  
+  /* Put type and nexthop. */
+  stream_putc (s, rib->type);
+  stream_putc (s, rib->flags);
+  
+  /* marker for message flags field */
+  messmark = stream_get_endp (s);
+  stream_putc (s, 0);
 
-  if (p->family == AF_INET)
+  /* Prefix. */
+  psize = PSIZE (p->prefixlen);
+  stream_putc (s, p->prefixlen);
+  stream_write (s, (u_char *) & p->u.prefix, psize);
+
+  /* 
+   * XXX The message format sent by zebra below does not match the format
+   * of the corresponding message expected by the zebra server
+   * itself (e.g., see zread_ipv4_add). The nexthop_num is not set correctly,
+   * (is there a bug on the client side if more than one segment is sent?)
+   * nexthop ZEBRA_NEXTHOP_IPV4 is never set, ZEBRA_NEXTHOP_IFINDEX 
+   * is hard-coded.
+   */
+  /* Nexthop */
+  
+  for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
     {
-      struct zapi_ipv4 api;
-  
-      memset (&api, 0, sizeof(api));
-      api.type = rib->type;
-      api.flags = rib->flags;
-      nhnum = 0;
-
-      /* Nexthop */
-      for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
+      if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB))
         {
-          if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB))
+          SET_FLAG (zapi_flags, ZAPI_MESSAGE_NEXTHOP);
+          SET_FLAG (zapi_flags, ZAPI_MESSAGE_IFINDEX);
+          
+          if (nhnummark == 0)
             {
-              SET_FLAG (zapi_flags, ZAPI_MESSAGE_NEXTHOP);
-              zsend_nexthop(&api.nexthop[nhnum], nexthop);
-              nhnum++;
+              nhnummark = stream_get_endp (s);
+              stream_putc (s, 1); /* placeholder */
             }
-        }
-      api.nexthop_num = nhnum;
+          
+          nhnum++;
 
-      /* Distance */
-      if (CHECK_FLAG (zapi_flags, ZAPI_MESSAGE_DISTANCE))
-        api.distance = rib->distance;
-
-      /* Metric */
-      if (cmd == ZEBRA_IPV4_ROUTE_ADD)
-        {
-          SET_FLAG (zapi_flags, ZAPI_MESSAGE_DISTANCE);
-          api.distance = rib->distance;
-          SET_FLAG (zapi_flags, ZAPI_MESSAGE_METRIC);
-          api.metric = rib->metric;
-        }
-  
-      /* write real message flags value */
-      api.message = zapi_flags;
-
-      zapi_ipv4_write (cmd, s, (struct prefix_ipv4*)p, &api);
-
-      /* Write packet length. */
-      stream_putw_at (s, 0, stream_get_endp (s));
-
-      return zebra_server_send_message (client);
-    }
+          switch(nexthop->type) 
+            {
+              case NEXTHOP_TYPE_IPV4:
+              case NEXTHOP_TYPE_IPV4_IFINDEX:
+                stream_put_in_addr (s, &nexthop->gate.ipv4);
+                break;
 #ifdef HAVE_IPV6
-  else if (p->family == AF_INET6)
-    {
-      struct zapi_ipv6 api;
-  
-      memset (&api, 0, sizeof(api));
-      api.type = rib->type;
-      api.flags = rib->flags;
-      nhnum = 0;
-
-      /* Nexthop */
-      for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
-        {
-          if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB))
-            {
-              SET_FLAG (zapi_flags, ZAPI_MESSAGE_NEXTHOP);
-              zsend_nexthop(&api.nexthop[nhnum], nexthop);
-              nhnum++;
-            }
-        }
-      api.nexthop_num = nhnum;
-
-      /* Distance */
-      if (CHECK_FLAG (zapi_flags, ZAPI_MESSAGE_DISTANCE))
-        api.distance = rib->distance;
-
-      /* Metric */
-      if (cmd == ZEBRA_IPV6_ROUTE_ADD)
-        {
-          SET_FLAG (zapi_flags, ZAPI_MESSAGE_DISTANCE);
-          api.distance = rib->distance;
-          SET_FLAG (zapi_flags, ZAPI_MESSAGE_METRIC);
-          api.metric = rib->metric;
-        }
-  
-      /* write real message flags value */
-      api.message = zapi_flags;
-
-      zapi_ipv6_write (cmd, s, (struct prefix_ipv6*)p, &api);
-
-      /* Write packet length. */
-      stream_putw_at (s, 0, stream_get_endp (s));
-
-      return zebra_server_send_message (client);
-    }
+              case NEXTHOP_TYPE_IPV6:
+              case NEXTHOP_TYPE_IPV6_IFINDEX:
+              case NEXTHOP_TYPE_IPV6_IFNAME:
+                stream_write (s, (u_char *) &nexthop->gate.ipv6, 16);
+                break;
 #endif
-   return 0;
+              default:
+                if (cmd == ZEBRA_IPV4_ROUTE_ADD 
+                    || cmd == ZEBRA_IPV4_ROUTE_DELETE)
+                  {
+                    struct in_addr empty;
+                    memset (&empty, 0, sizeof (struct in_addr));
+                    stream_write (s, (u_char *) &empty, IPV4_MAX_BYTELEN);
+                  }
+                else
+                  {
+                    struct in6_addr empty;
+                    memset (&empty, 0, sizeof (struct in6_addr));
+                    stream_write (s, (u_char *) &empty, IPV6_MAX_BYTELEN);
+                  }
+              }
+
+          /* Interface index. */
+          stream_putc (s, 1);
+          stream_putl (s, nexthop->ifindex);
+
+          break;
+        }
+    }
+
+  /* Metric */
+  if (cmd == ZEBRA_IPV4_ROUTE_ADD || ZEBRA_IPV6_ROUTE_ADD)
+    {
+      SET_FLAG (zapi_flags, ZAPI_MESSAGE_DISTANCE);
+      stream_putc (s, rib->distance);
+      SET_FLAG (zapi_flags, ZAPI_MESSAGE_METRIC);
+      stream_putl (s, rib->metric);
+    }
+  
+  /* write real message flags value */
+  stream_putc_at (s, messmark, zapi_flags);
+  
+  /* Write next-hop number */
+  if (nhnummark)
+    stream_putc_at (s, nhnummark, nhnum);
+  
+  /* Write packet size. */
+  stream_putw_at (s, 0, stream_get_endp (s));
+
+  return zebra_server_send_message(client);
 }
 
 #ifdef HAVE_IPV6
@@ -490,16 +481,9 @@ zsend_ipv6_nexthop_lookup (struct zserv *client, struct in6_addr *addr)
   unsigned long nump;
   u_char num;
   struct nexthop *nexthop;
-  struct zapi_nexthop znh;
-  struct prefix p;
-
-  memset(&p, 0, sizeof(struct prefix));
-  p.family = AF_INET6;
-  p.prefixlen = IPV6_MAX_PREFIXLEN;
-  IPV6_ADDR_COPY (&p.u.prefix6, addr);
 
   /* Lookup nexthop. */
-  rib = rib_match_route (&p);
+  rib = rib_match_ipv6 (addr);
 
   /* Get output stream. */
   s = client->obuf;
@@ -518,8 +502,25 @@ zsend_ipv6_nexthop_lookup (struct zserv *client, struct in6_addr *addr)
       for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
 	if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB))
 	  {
-	    zsend_nexthop(&znh, nexthop);
-	    zapi_nexthop_write(s, &znh);
+	    stream_putc (s, nexthop->type);
+	    switch (nexthop->type)
+	      {
+	      case ZEBRA_NEXTHOP_IPV6:
+		stream_put (s, &nexthop->gate.ipv6, 16);
+		break;
+	      case ZEBRA_NEXTHOP_IPV6_IFINDEX:
+	      case ZEBRA_NEXTHOP_IPV6_IFNAME:
+		stream_put (s, &nexthop->gate.ipv6, 16);
+		stream_putl (s, nexthop->ifindex);
+		break;
+	      case ZEBRA_NEXTHOP_IFINDEX:
+	      case ZEBRA_NEXTHOP_IFNAME:
+		stream_putl (s, nexthop->ifindex);
+		break;
+	      default:
+                /* do nothing */
+		break;
+	      }
 	    num++;
 	  }
       stream_putc_at (s, nump, num);
@@ -544,16 +545,9 @@ zsend_ipv4_nexthop_lookup (struct zserv *client, struct in_addr addr)
   unsigned long nump;
   u_char num;
   struct nexthop *nexthop;
-  struct zapi_nexthop znh;
-  struct prefix p;
-
-  memset(&p, 0, sizeof(struct prefix));
-  p.family = AF_INET;
-  p.prefixlen = IPV4_MAX_PREFIXLEN;
-  IPV4_ADDR_COPY (&p.u.prefix4, &addr);
 
   /* Lookup nexthop. */
-  rib = rib_match_route (&p);
+  rib = rib_match_ipv4 (addr);
 
   /* Get output stream. */
   s = client->obuf;
@@ -572,8 +566,20 @@ zsend_ipv4_nexthop_lookup (struct zserv *client, struct in_addr addr)
       for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
 	if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB))
 	  {
-	    zsend_nexthop(&znh, nexthop);
-	    zapi_nexthop_write(s, &znh);
+	    stream_putc (s, nexthop->type);
+	    switch (nexthop->type)
+	      {
+	      case ZEBRA_NEXTHOP_IPV4:
+		stream_put_in_addr (s, &nexthop->gate.ipv4);
+		break;
+	      case ZEBRA_NEXTHOP_IFINDEX:
+	      case ZEBRA_NEXTHOP_IFNAME:
+		stream_putl (s, nexthop->ifindex);
+		break;
+	      default:
+                /* do nothing */
+		break;
+	      }
 	    num++;
 	  }
       stream_putc_at (s, nump, num);
@@ -597,10 +603,9 @@ zsend_ipv4_import_lookup (struct zserv *client, struct prefix_ipv4 *p)
   unsigned long nump;
   u_char num;
   struct nexthop *nexthop;
-  struct zapi_nexthop znh;
 
   /* Lookup nexthop. */
-  rib = rib_lookup_route ((struct prefix*)p);
+  rib = rib_lookup_ipv4 (p);
 
   /* Get output stream. */
   s = client->obuf;
@@ -619,8 +624,20 @@ zsend_ipv4_import_lookup (struct zserv *client, struct prefix_ipv4 *p)
       for (nexthop = rib->nexthop; nexthop; nexthop = nexthop->next)
 	if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB))
 	  {
-	    zsend_nexthop(&znh, nexthop);
-	    zapi_nexthop_write(s, &znh);
+	    stream_putc (s, nexthop->type);
+	    switch (nexthop->type)
+	      {
+	      case ZEBRA_NEXTHOP_IPV4:
+		stream_put_in_addr (s, &nexthop->gate.ipv4);
+		break;
+	      case ZEBRA_NEXTHOP_IFINDEX:
+	      case ZEBRA_NEXTHOP_IFNAME:
+		stream_putl (s, nexthop->ifindex);
+		break;
+	      default:
+                /* do nothing */
+		break;
+	      }
 	    num++;
 	  }
       stream_putc_at (s, nump, num);
@@ -717,41 +734,76 @@ zread_ipv4_add (struct zserv *client, u_short length)
   int i;
   struct rib *rib;
   struct prefix_ipv4 p;
+  u_char message;
+  struct in_addr nexthop;
+  u_char nexthop_num;
+  u_char nexthop_type;
   struct stream *s;
-  struct zapi_ipv4 api;
+  unsigned int ifindex;
+  u_char ifname_len;
 
   /* Get input stream.  */
   s = client->ibuf;
-  memset (&api, 0, sizeof (api));
-  memset (&p, 0, sizeof (p));
-  zapi_ipv4_read (s, length, &api, &p);
 
   /* Allocate new rib. */
   rib = XCALLOC (MTYPE_RIB, sizeof (struct rib));
   
   /* Type, flags, message. */
-  rib->type = api.type;
-  rib->flags = api.flags;
+  rib->type = stream_getc (s);
+  rib->flags = stream_getc (s);
+  message = stream_getc (s); 
   rib->uptime = time (NULL);
 
+  /* IPv4 prefix. */
+  memset (&p, 0, sizeof (struct prefix_ipv4));
+  p.family = AF_INET;
+  p.prefixlen = stream_getc (s);
+  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
+
   /* Nexthop parse. */
-  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
+  if (CHECK_FLAG (message, ZAPI_MESSAGE_NEXTHOP))
     {
-      for (i = 0; i < api.nexthop_num; i++)
-        nexthop_zapi_nexthop_add(rib, &api.nexthop[i]);
+      nexthop_num = stream_getc (s);
+
+      for (i = 0; i < nexthop_num; i++)
+	{
+	  nexthop_type = stream_getc (s);
+
+	  switch (nexthop_type)
+	    {
+	    case ZEBRA_NEXTHOP_IFINDEX:
+	      ifindex = stream_getl (s);
+	      nexthop_ifindex_add (rib, ifindex);
+	      break;
+	    case ZEBRA_NEXTHOP_IFNAME:
+	      ifname_len = stream_getc (s);
+	      stream_forward_getp (s, ifname_len);
+	      break;
+	    case ZEBRA_NEXTHOP_IPV4:
+	      nexthop.s_addr = stream_get_ipv4 (s);
+	      nexthop_ipv4_add (rib, &nexthop, NULL);
+	      break;
+	    case ZEBRA_NEXTHOP_IPV6:
+	      stream_forward_getp (s, IPV6_MAX_BYTELEN);
+	      break;
+      case ZEBRA_NEXTHOP_BLACKHOLE:
+        nexthop_blackhole_add (rib);
+        break;
+	    }
+	}
     }
 
   /* Distance. */
-  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
-    rib->distance = api.distance;
+  if (CHECK_FLAG (message, ZAPI_MESSAGE_DISTANCE))
+    rib->distance = stream_getc (s);
 
   /* Metric. */
-  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_METRIC))
-    rib->metric = api.metric;
+  if (CHECK_FLAG (message, ZAPI_MESSAGE_METRIC))
+    rib->metric = stream_getl (s);
     
   /* Table */
   rib->table=zebrad.rtm_table_default;
-  rib_add_multipath ((struct prefix*)&p, rib);
+  rib_add_ipv4_multipath (&p, rib);
   return 0;
 }
 
@@ -760,22 +812,72 @@ static int
 zread_ipv4_delete (struct zserv *client, u_short length)
 {
   int i;
-  struct prefix_ipv4 p;
   struct stream *s;
   struct zapi_ipv4 api;
-
-  /* Get input stream.  */
+  struct in_addr nexthop;
+  unsigned long ifindex;
+  struct prefix_ipv4 p;
+  u_char nexthop_num;
+  u_char nexthop_type;
+  u_char ifname_len;
+  
   s = client->ibuf;
-  memset (&api, 0, sizeof (api));
-  memset (&p, 0, sizeof (p));
-  zapi_ipv4_read (s, length, &api, &p);
+  ifindex = 0;
+  nexthop.s_addr = 0;
+
+  /* Type, flags, message. */
+  api.type = stream_getc (s);
+  api.flags = stream_getc (s);
+  api.message = stream_getc (s);
+
+  /* IPv4 prefix. */
+  memset (&p, 0, sizeof (struct prefix_ipv4));
+  p.family = AF_INET;
+  p.prefixlen = stream_getc (s);
+  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
-    for (i = 0; i < api.nexthop_num; i++)
-      rib_delete_route (api.type, api.flags, (struct prefix*)&p,
-                        &api.nexthop[i], client->rtm_table);
+    {
+      nexthop_num = stream_getc (s);
 
+      for (i = 0; i < nexthop_num; i++)
+	{
+	  nexthop_type = stream_getc (s);
+
+	  switch (nexthop_type)
+	    {
+	    case ZEBRA_NEXTHOP_IFINDEX:
+	      ifindex = stream_getl (s);
+	      break;
+	    case ZEBRA_NEXTHOP_IFNAME:
+	      ifname_len = stream_getc (s);
+	      stream_forward_getp (s, ifname_len);
+	      break;
+	    case ZEBRA_NEXTHOP_IPV4:
+	      nexthop.s_addr = stream_get_ipv4 (s);
+	      break;
+	    case ZEBRA_NEXTHOP_IPV6:
+	      stream_forward_getp (s, IPV6_MAX_BYTELEN);
+	      break;
+	    }
+	}
+    }
+
+  /* Distance. */
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
+    api.distance = stream_getc (s);
+  else
+    api.distance = 0;
+
+  /* Metric. */
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_METRIC))
+    api.metric = stream_getl (s);
+  else
+    api.metric = 0;
+    
+  rib_delete_ipv4 (api.type, api.flags, &p, &nexthop, ifindex,
+		   client->rtm_table);
   return 0;
 }
 
@@ -808,24 +910,65 @@ static int
 zread_ipv6_add (struct zserv *client, u_short length)
 {
   int i;
-  struct prefix_ipv6 p;
   struct stream *s;
   struct zapi_ipv6 api;
-
-  /* Get input stream.  */
+  struct in6_addr nexthop;
+  unsigned long ifindex;
+  struct prefix_ipv6 p;
+  
   s = client->ibuf;
-  memset (&api, 0, sizeof (api));
-  memset (&p, 0, sizeof (p));
-  zapi_ipv6_read (s, length, &api, &p);
+  ifindex = 0;
+  memset (&nexthop, 0, sizeof (struct in6_addr));
+
+  /* Type, flags, message. */
+  api.type = stream_getc (s);
+  api.flags = stream_getc (s);
+  api.message = stream_getc (s);
+
+  /* IPv4 prefix. */
+  memset (&p, 0, sizeof (struct prefix_ipv6));
+  p.family = AF_INET6;
+  p.prefixlen = stream_getc (s);
+  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
     {
+      u_char nexthop_type;
+
+      api.nexthop_num = stream_getc (s);
       for (i = 0; i < api.nexthop_num; i++)
-        rib_add_route (api.type, api.flags, (struct prefix*)&p,
-                       &api.nexthop[i], 0, api.metric, api.distance);
+	{
+	  nexthop_type = stream_getc (s);
+
+	  switch (nexthop_type)
+	    {
+	    case ZEBRA_NEXTHOP_IPV6:
+	      stream_get (&nexthop, s, 16);
+	      break;
+	    case ZEBRA_NEXTHOP_IFINDEX:
+	      ifindex = stream_getl (s);
+	      break;
+	    }
+	}
     }
 
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
+    api.distance = stream_getc (s);
+  else
+    api.distance = 0;
+
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_METRIC))
+    api.metric = stream_getl (s);
+  else
+    api.metric = 0;
+    
+  if (IN6_IS_ADDR_UNSPECIFIED (&nexthop))
+    rib_add_ipv6 (api.type, api.flags, &p, NULL, ifindex, 0, api.metric,
+		  api.distance);
+  else
+    rib_add_ipv6 (api.type, api.flags, &p, &nexthop, ifindex, 0, api.metric,
+		  api.distance);
   return 0;
 }
 
@@ -834,24 +977,62 @@ static int
 zread_ipv6_delete (struct zserv *client, u_short length)
 {
   int i;
-  struct prefix_ipv6 p;
   struct stream *s;
   struct zapi_ipv6 api;
-
-  /* Get input stream.  */
+  struct in6_addr nexthop;
+  unsigned long ifindex;
+  struct prefix_ipv6 p;
+  
   s = client->ibuf;
-  memset (&api, 0, sizeof (api));
-  memset (&p, 0, sizeof (p));
-  zapi_ipv6_read (s, length, &api, &p);
+  ifindex = 0;
+  memset (&nexthop, 0, sizeof (struct in6_addr));
+
+  /* Type, flags, message. */
+  api.type = stream_getc (s);
+  api.flags = stream_getc (s);
+  api.message = stream_getc (s);
+
+  /* IPv4 prefix. */
+  memset (&p, 0, sizeof (struct prefix_ipv6));
+  p.family = AF_INET6;
+  p.prefixlen = stream_getc (s);
+  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
     {
+      u_char nexthop_type;
+
+      api.nexthop_num = stream_getc (s);
       for (i = 0; i < api.nexthop_num; i++)
-        rib_delete_route (api.type, api.flags, (struct prefix*)&p,
-                          &api.nexthop[i], 0);
+	{
+	  nexthop_type = stream_getc (s);
+
+	  switch (nexthop_type)
+	    {
+	    case ZEBRA_NEXTHOP_IPV6:
+	      stream_get (&nexthop, s, 16);
+	      break;
+	    case ZEBRA_NEXTHOP_IFINDEX:
+	      ifindex = stream_getl (s);
+	      break;
+	    }
+	}
     }
 
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
+    api.distance = stream_getc (s);
+  else
+    api.distance = 0;
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_METRIC))
+    api.metric = stream_getl (s);
+  else
+    api.metric = 0;
+    
+  if (IN6_IS_ADDR_UNSPECIFIED (&nexthop))
+    rib_delete_ipv6 (api.type, api.flags, &p, NULL, ifindex, 0);
+  else
+    rib_delete_ipv6 (api.type, api.flags, &p, &nexthop, ifindex, 0);
   return 0;
 }
 
@@ -867,416 +1048,6 @@ zread_ipv6_nexthop_lookup (struct zserv *client, u_short length)
   return zsend_ipv6_nexthop_lookup (client, &addr);
 }
 #endif /* HAVE_IPV6 */
-
-#ifdef HAVE_MPLS
-int
-zsend_mpls_xc_add (struct zserv *client, struct zmpls_xc *p)
-{
-  struct zapi_mpls_xc api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  api.owner = p->owner;
-  api.index = p->index;
-  api.in_labelspace = p->in_labelspace;
-  memcpy(&api.in_label,&p->in_label, sizeof(struct zmpls_label));
-  api.out_index = p->out_index;
-
-  zserv_create_header (s, ZEBRA_MPLS_XC_ADD);
-  mpls_xc_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_xc_delete (struct zserv *client, struct zmpls_xc *p)
-{
-  struct zapi_mpls_xc api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  api.owner = p->owner;
-  api.index = p->index;
-  api.in_labelspace = p->in_labelspace;
-  memcpy(&api.in_label,&p->in_label, sizeof(struct zmpls_label));
-  api.out_index = p->out_index;
-
-  zserv_create_header (s, ZEBRA_MPLS_XC_DELETE);
-  mpls_xc_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_in_segment_add (struct zserv *client, struct zmpls_in_segment *in)
-{
-  struct zapi_mpls_in_segment api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_IN_SEGMENT_ADD);
-
-  api.owner = in->owner;
-  api.labelspace = in->labelspace;
-  api.protocol = in->protocol;
-  api.pop = in->pop;
-  memcpy (&api.label, &in->label, sizeof (api.label));
-  
-  mpls_in_segment_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_in_segment_delete (struct zserv *client, struct zmpls_in_segment *in)
-{
-  struct zapi_mpls_in_segment api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_IN_SEGMENT_DELETE);
-
-  api.owner = in->owner;
-  api.labelspace = in->labelspace;
-  api.protocol = in->protocol;
-  api.pop = in->pop;
-  memcpy (&api.label, &in->label, sizeof (api.label));
-  
-  mpls_in_segment_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_out_segment_add (struct zserv *client, struct zmpls_out_segment *out)
-{
-  struct zapi_mpls_out_segment api;
-  struct stream *s;
-
-  api.owner = out->owner;
-
-  memcpy(&api.nh, &out->nh, sizeof(struct zapi_nexthop));
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_OUT_SEGMENT_ADD);
-  mpls_out_segment_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_out_segment_delete (struct zserv *client, struct zmpls_out_segment *out)
-{
-  struct zapi_mpls_out_segment api;
-  struct stream *s;
-
-  api.owner = out->owner;
-
-  memcpy(&api.nh, &out->nh, sizeof(struct zapi_nexthop));
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_OUT_SEGMENT_DELETE);
-  mpls_out_segment_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_labelspace_add (struct zserv *client, struct interface *ifp)
-{
-  struct zapi_mpls_labelspace api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_LABELSPACE_ADD);
-
-  api.owner = ZEBRA_ROUTE_KERNEL;
-  api.labelspace = ifp->mpls_labelspace;
-  strncpy(api.ifname, ifp->name, INTERFACE_NAMSIZ);
-  mpls_labelspace_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_labelspace_delete (struct zserv *client, struct interface *ifp)
-{
-  struct zapi_mpls_labelspace api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_LABELSPACE_DELETE);
-
-  api.owner = ZEBRA_ROUTE_KERNEL;
-  api.labelspace = ifp->mpls_labelspace;
-  strncpy(api.ifname, ifp->name, INTERFACE_NAMSIZ);
-  mpls_labelspace_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_ftn_add (struct zserv *client, struct zmpls_ftn *ftn)
-{
-  struct zapi_mpls_ftn api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_FTN_ADD);
-
-  api.owner = ftn->owner;
-  api.out_index = ftn->out_index;
-  memcpy(&api.fec.u.p, &ftn->fec.u.p, sizeof (struct prefix));
-  if (ftn->fec.u.p.family == AF_INET) {
-    api.fec.type = ZEBRA_MPLS_FEC_IPV4;
-  } else if (ftn->fec.u.p.family == AF_INET6) {
-    api.fec.type = ZEBRA_MPLS_FEC_IPV6;
-  } else {
-    assert (0);
-  }
-  mpls_ftn_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-int
-zsend_mpls_ftn_delete (struct zserv *client, struct zmpls_ftn *ftn)
-{
-  struct zapi_mpls_ftn api;
-  struct stream *s;
-
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_FTN_DELETE);
-
-  api.owner = ftn->owner;
-  api.out_index = ftn->out_index;
-  memcpy(&api.fec.u.p, &ftn->fec.u.p, sizeof (struct prefix));
-  if (ftn->fec.u.p.family == AF_INET) {
-    api.fec.type = ZEBRA_MPLS_FEC_IPV4;
-  } else if (ftn->fec.u.p.family == AF_INET6) {
-    api.fec.type = ZEBRA_MPLS_FEC_IPV6;
-  } else {
-    assert (0);
-  }
-  mpls_ftn_stream_write (s, &api);
-
-  stream_putw_at (s, 0, stream_get_endp (s));
-  return zebra_server_send_message(client);
-}
-
-static void
-zread_mpls_xc_add (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_xc api;
-  struct zmpls_out_segment *out;
-  struct zmpls_in_segment tmp;
-  struct zmpls_in_segment *in;
-  struct zmpls_xc xc;
-
-  memset(&api, 0, sizeof(api));
-  memset(&xc, 0, sizeof(xc));
-  mpls_xc_stream_read (client->ibuf, &api);
-
-  tmp.labelspace = api.in_labelspace;
-  memcpy(&tmp.label, &api.in_label, sizeof(struct zmpls_label));
-
-  out = mpls_out_segment_find (api.out_index);
-  in = mpls_in_segment_find (&tmp);
-
-  xc.in_labelspace = in->labelspace;
-  memcpy(&xc.in_label, &in->label, sizeof(struct zmpls_label));
-  xc.out_index = out->index;
-  xc.owner = api.owner;
-
-  mpls_xc_register (&xc);
-}
-
-static void
-zread_mpls_xc_delete (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_xc api;
-  struct zmpls_in_segment tmp;
-  struct zmpls_in_segment *in;
-  struct zmpls_xc *xc;
-
-  memset(&api, 0, sizeof(api));
-  memset(&tmp, 0, sizeof(tmp));
-  mpls_xc_stream_read (client->ibuf, &api);
-
-  memcpy(&tmp.label, &api.in_label, sizeof(struct zmpls_label));
-  tmp.labelspace = api.in_labelspace;
-  in = mpls_in_segment_find (&tmp);
-  xc = mpls_xc_find (in->xc);
-
-  if (xc)
-    mpls_xc_unregister (xc);
-  else
-    zlog_warn("zread_mpls_xc_delete: xc %d does not exist", in->xc);
-}
-
-static void
-zread_mpls_in_segment_add (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_in_segment api;
-  struct zmpls_in_segment in;
-
-  memset(&api, 0, sizeof(api));
-  memset(&in, 0, sizeof(in));
-  mpls_in_segment_stream_read (client->ibuf, &api);
-
-  in.owner = api.owner;
-  in.labelspace = api.labelspace;
-  in.protocol = api.protocol;
-  in.pop = api.pop;
-  memcpy (&in.label, &api.label, sizeof (api.label));
-
-  mpls_in_segment_register (&in, 1);
-}
-
-static void
-zread_mpls_in_segment_delete (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_in_segment api;
-  struct zmpls_in_segment in;
-
-  memset(&api, 0, sizeof(api));
-  memset(&in, 0, sizeof(in));
-  mpls_in_segment_stream_read (client->ibuf, &api);
-  in.owner = api.owner;
-  in.labelspace = api.labelspace;
-  in.protocol = api.protocol;
-  in.pop = api.pop;
-  memcpy (&in.label, &api.label, sizeof (api.label));
-
-  mpls_in_segment_unregister (&in, 0);
-}
-
-static void
-zread_mpls_out_segment_add (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_out_segment api;
-  struct zmpls_out_segment out;
-  struct stream *s;
-
-  memset(&api, 0, sizeof(api));
-  memset(&out, 0, sizeof(out));
-  mpls_out_segment_stream_read (client->ibuf, &api);
-
-  out.owner = api.owner;
-  memcpy(&out.nh, &api.nh, sizeof(struct zapi_nexthop));
-
-  mpls_out_segment_register (&out);
-  api.index = out.index;
-
-  /* Reset stream. */
-  s = client->obuf;
-  stream_reset (s);
-
-  zserv_create_header (s, ZEBRA_MPLS_OUT_SEGMENT_ADD);
-  mpls_out_segment_stream_write(s, &api);
-
-  /* Put length at the first point of the stream. */
-  stream_putw_at (s, 0, stream_get_endp (s));
-
-  zebra_server_send_message(client);
-}
-
-static void
-zread_mpls_out_segment_delete (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_out_segment api;
-  struct zmpls_out_segment out;
-
-  memset(&api, 0, sizeof(api));
-  memset(&out, 0, sizeof(out));
-  mpls_out_segment_stream_read (client->ibuf, &api);
-
-  out.owner = api.owner;
-  memcpy(&out.nh, &api.nh, sizeof(struct zapi_nexthop));
-
-  mpls_out_segment_unregister (&out);
-}
-
-static void
-zread_mpls_ftn_add (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_ftn api;
-  struct zmpls_ftn ftn;
-
-  memset(&api, 0, sizeof(api));
-  memset(&ftn, 0, sizeof(ftn));
-  mpls_ftn_stream_read (client->ibuf, &api);
-
-  memcpy(&ftn.fec, &api.fec, sizeof(struct zmpls_fec));
-  ftn.owner = api.owner;
-  ftn.out_index = api.out_index;
-  mpls_ftn_register (&ftn, 1);
-}
-
-static void
-zread_mpls_ftn_delete (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_ftn api;
-  struct zmpls_ftn *ftn;
-
-  memset(&api, 0, sizeof(api));
-  mpls_ftn_stream_read (client->ibuf, &api);
-
-  ftn = mpls_ftn_find_by_fec(&api.fec);
-  if (ftn) {
-    mpls_ftn_unregister (ftn, 1);
-  }
-}
-
-static void
-zread_mpls_labelspace_add (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_labelspace api;
-
-  memset(&api, 0, sizeof(api));
-  mpls_labelspace_stream_read (client->ibuf, &api);
-  assert(0);
-}
-
-static void
-zread_mpls_labelspace_delete (struct zserv *client, u_short length)
-{
-  struct zapi_mpls_labelspace api;
-
-  memset(&api, 0, sizeof(api));
-  mpls_labelspace_stream_read (client->ibuf, &api);
-  assert(0);
-}
-#endif /* HAVE_MPLS */
 
 /* Register zebra server router-id information.  Send current router-id */
 static int
@@ -1512,38 +1283,6 @@ zebra_client_read (struct thread *thread)
     case ZEBRA_IPV4_IMPORT_LOOKUP:
       zread_ipv4_import_lookup (client, length);
       break;
-#ifdef HAVE_MPLS
-    case ZEBRA_MPLS_XC_ADD:
-      zread_mpls_xc_add (client, length);
-      break;
-    case ZEBRA_MPLS_XC_DELETE:
-      zread_mpls_xc_delete (client, length);
-      break;
-    case ZEBRA_MPLS_IN_SEGMENT_ADD:
-      zread_mpls_in_segment_add (client, length);
-      break;
-    case ZEBRA_MPLS_IN_SEGMENT_DELETE:
-      zread_mpls_in_segment_delete (client, length);
-      break;
-    case ZEBRA_MPLS_OUT_SEGMENT_ADD:
-      zread_mpls_out_segment_add (client, length);
-      break;
-    case ZEBRA_MPLS_OUT_SEGMENT_DELETE:
-      zread_mpls_out_segment_delete (client, length);
-      break;
-    case ZEBRA_MPLS_LABELSPACE_ADD:
-      zread_mpls_labelspace_add (client, length);
-      break;
-    case ZEBRA_MPLS_LABELSPACE_DELETE:
-      zread_mpls_labelspace_delete (client, length);
-      break;
-    case ZEBRA_MPLS_FTN_ADD:
-      zread_mpls_ftn_add (client, length);
-      break;
-    case ZEBRA_MPLS_FTN_DELETE:
-      zread_mpls_ftn_delete (client, length);
-      break;
-#endif /* HAVE_MPLS */
     default:
       zlog_info ("Zebra received unknown command %d", command);
       break;

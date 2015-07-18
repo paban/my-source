@@ -72,18 +72,11 @@ enum node_type
   AAA_NODE,			/* AAA node. */
   KEYCHAIN_NODE,		/* Key-chain node. */
   KEYCHAIN_KEY_NODE,		/* Key-chain key node. */
-  MPLS_LABELSPACE_NODE,		/* MPLS Labelspace node. */
   INTERFACE_NODE,		/* Interface mode node. */
-  TUNNEL_NODE,			/* Tunnel config node. */
-  MPLS_TUNNEL_NODE,		/* MPLS Tunnel config node. */
-  MPLS_TE_TUNNEL_NODE,
-  MPLS_TE_TUNNEL_CONF_NODE,
   ZEBRA_NODE,			/* zebra connection node. */
   TABLE_NODE,			/* rtm_table selection node. */
   RIP_NODE,			/* RIP protocol mode node. */ 
   RIPNG_NODE,			/* RIPng protocol mode node. */
-  LDP_NODE,			/* LDP protocol mode */
-  LDP_IF_NODE,			/* LDP interface mode */
   BGP_NODE,			/* BGP protocol mode which includes BGP4+ */
   BGP_VPNV4_NODE,		/* BGP MPLS-VPN PE exchange. */
   BGP_IPV4_NODE,		/* BGP IPv4 unicast address family.  */

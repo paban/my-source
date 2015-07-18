@@ -52,7 +52,7 @@ if_ioctl (u_long request, caddr_t buffer)
 {
   int sock;
   int ret;
-  int err = 0;
+  int err;
 
   if (zserv_privs.change(ZPRIVS_RAISE))
     zlog (NULL, LOG_ERR, "Can't raise privileges");
@@ -85,7 +85,7 @@ if_ioctl_ipv6 (u_long request, caddr_t buffer)
 {
   int sock;
   int ret;
-  int err = 0;
+  int err;
 
   if (zserv_privs.change(ZPRIVS_RAISE))
     zlog (NULL, LOG_ERR, "Can't raise privileges");

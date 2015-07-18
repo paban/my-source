@@ -166,38 +166,6 @@ zebra_redistribute (struct zserv *client, int type)
 	    && zebra_check_addr (&rn->p))
 	  zsend_route_multipath (ZEBRA_IPV6_ROUTE_ADD, client, &rn->p, newrib);
 #endif /* HAVE_IPV6 */
-
-#ifdef HAVE_MPLS
-  {
-    struct listnode *node;
-    struct zmpls_in_segment *in;
-    struct zmpls_out_segment *out;
-    struct zmpls_ftn *ftn;
-    struct zmpls_xc *xc;
-    struct interface *ifp;
-
-    for (ALL_LIST_ELEMENTS_RO(iflist, node, ifp))
-      if (type == ZEBRA_ROUTE_STATIC &&
-          ifp->mpls_labelspace > -1)
-          zsend_mpls_labelspace_add (client, ifp);
-
-    for (ALL_LIST_ELEMENTS_RO(&mpls_in_segment_list, node, in))
-      if (type == in->owner)
-        zsend_mpls_in_segment_add (client, in);
-
-    for (ALL_LIST_ELEMENTS_RO(&mpls_out_segment_list, node, out))
-      if (type == out->owner)
-        zsend_mpls_out_segment_add (client, out);
-
-    for (ALL_LIST_ELEMENTS_RO(&mpls_xc_list, node, xc))
-      if (type == xc->owner)
-        zsend_mpls_xc_add (client, xc);
-
-    for (ALL_LIST_ELEMENTS_RO(&mpls_ftn_list, node, ftn))
-      if (type == ftn->owner)
-        zsend_mpls_ftn_add (client, ftn);
-  }
-#endif /* HAVE_MPLS */
 }
 
 void
@@ -205,8 +173,6 @@ redistribute_add (struct prefix *p, struct rib *rib)
 {
   struct listnode *node, *nnode;
   struct zserv *client;
-
-  /* MPLS: check is there are any FTN waiting for this */
 
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     {
@@ -243,8 +209,6 @@ redistribute_delete (struct prefix *p, struct rib *rib)
   /* Add DISTANCE_INFINITY check. */
   if (rib->distance == DISTANCE_INFINITY)
     return;
-
-  /* MPLS: check is there are any FTN depending on this */
 
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     {
@@ -291,7 +255,6 @@ zebra_redistribute_add (int command, struct zserv *client, int length)
     case ZEBRA_ROUTE_OSPF:
     case ZEBRA_ROUTE_OSPF6:
     case ZEBRA_ROUTE_BGP:
-    case ZEBRA_ROUTE_LDP:
       if (! client->redist[type])
 	{
 	  client->redist[type] = 1;
@@ -320,7 +283,6 @@ zebra_redistribute_delete (int command, struct zserv *client, int length)
     case ZEBRA_ROUTE_OSPF:
     case ZEBRA_ROUTE_OSPF6:
     case ZEBRA_ROUTE_BGP:
-    case ZEBRA_ROUTE_LDP:
       client->redist[type] = 0;
       break;
     default:
@@ -354,29 +316,6 @@ zebra_interface_up_update (struct interface *ifp)
 
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     zsend_interface_update (ZEBRA_INTERFACE_UP, client, ifp);
-
-#ifdef HAVE_MPLS
-  if (ifp->mpls_labelspace >= 0)
-    mpls_ctrl_set_interface_labelspace(ifp, ifp->mpls_labelspace);
-
-  /* MPLS: check if there are any NHLFE waiting for this */
-  if (if_is_operative(ifp))
-  {
-    struct zmpls_out_segment *out;
-    for (ALL_LIST_ELEMENTS_RO(&mpls_out_segment_list, node, out))
-    {
-      if ((out->installed) ||
-          !mpls_nexthop_ready(&out->nh))
-        continue;
-
-      out->installed = 1;
-      mpls_ctrl_nhlfe_register(out);
-      redistribute_add_mpls_out_segment (out);
-    }
-  } else {
-    assert(0);
-  }
-#endif /* HAVE_MPLS */
 }
 
 /* Interface down information. */
@@ -388,21 +327,6 @@ zebra_interface_down_update (struct interface *ifp)
 
   if (IS_ZEBRA_DEBUG_EVENT)
     zlog_debug ("MESSAGE: ZEBRA_INTERFACE_DOWN %s", ifp->name);
-
-#ifdef HAVE_MPLS
-  /* MPLS: check if there are any NHLFE depending on this */
-  struct zmpls_out_segment *out;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_out_segment_list, node, out))
-  {
-    if ((!out->installed) ||
-        mpls_nexthop_ready(&out->nh))
-      continue;
-
-    redistribute_delete_mpls_out_segment (out);
-    mpls_ctrl_nhlfe_unregister(out);
-    out->installed = 0;
-  }
-#endif /* HAVE_MPLS */
 
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     zsend_interface_update (ZEBRA_INTERFACE_DOWN, client, ifp);
@@ -421,24 +345,6 @@ zebra_interface_add_update (struct interface *ifp)
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     if (client->ifinfo)
       zsend_interface_add (client, ifp);
-
-#ifdef HAVE_MPLS
-  /* MPLS: check if there are any NHLFE waiting for this */
-  if (if_is_operative(ifp))
-  {
-    struct zmpls_out_segment *out;
-    for (ALL_LIST_ELEMENTS_RO(&mpls_out_segment_list, node, out))
-    {
-      if ((out->installed) ||
-          !mpls_nexthop_ready(&out->nh))
-        continue;
-
-      out->installed = 1;
-      mpls_ctrl_nhlfe_register(out);
-      redistribute_add_mpls_out_segment (out);
-    }
-  }
-#endif /* HAVE_MPLS */
 }
 
 void
@@ -449,21 +355,6 @@ zebra_interface_delete_update (struct interface *ifp)
 
   if (IS_ZEBRA_DEBUG_EVENT)
     zlog_debug ("MESSAGE: ZEBRA_INTERFACE_DELETE %s", ifp->name);
-
-#ifdef HAVE_MPLS
-  /* MPLS: check if there are any NHLFE depending on this */
-  struct zmpls_out_segment *out;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_out_segment_list, node, out))
-  {
-    if ((!out->installed) ||
-        mpls_nexthop_ready(&out->nh))
-      continue;
-
-    out->installed = 0;
-    redistribute_delete_mpls_out_segment (out);
-    mpls_ctrl_nhlfe_unregister(out);
-  }
-#endif /* HAVE_MPLS */
 
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     if (client->ifinfo)
@@ -488,29 +379,11 @@ zebra_interface_address_add_update (struct interface *ifp,
 		  p->prefixlen, ifc->ifp->name);
     }
 
+  router_id_add_address(ifc);
+
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     if (client->ifinfo && CHECK_FLAG (ifc->conf, ZEBRA_IFC_REAL))
       zsend_interface_address (ZEBRA_INTERFACE_ADDRESS_ADD, client, ifp, ifc);
-
-  router_id_add_address(ifc);
-
-#ifdef HAVE_MPLS
-  /* MPLS: check if there are any NHLFE waiting for this */
-  if (if_is_operative(ifp))
-  {
-    struct zmpls_out_segment *out;
-    for (ALL_LIST_ELEMENTS_RO(&mpls_out_segment_list, node, out))
-    {
-      if ((out->installed) ||
-          !mpls_nexthop_ready(&out->nh))
-        continue;
-
-      out->installed = 1;
-      mpls_ctrl_nhlfe_register(out);
-      redistribute_add_mpls_out_segment (out);
-    }
-  }
-#endif /* HAVE_MPLS */
 }
 
 /* Interface address deletion. */
@@ -531,240 +404,9 @@ zebra_interface_address_delete_update (struct interface *ifp,
 		 p->prefixlen, ifc->ifp->name);
     }
 
-#ifdef HAVE_MPLS
-  /* MPLS: check if there are any NHLFE depending on this */
-  struct zmpls_out_segment *out;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_out_segment_list, node, out))
-  {
-    if ((!out->installed) ||
-        mpls_nexthop_ready(&out->nh))
-      continue;
-
-    redistribute_delete_mpls_out_segment (out);
-    mpls_ctrl_nhlfe_unregister(out);
-    out->installed = 0;
-  }
-#endif /* HAVE_MPLS */
-
   router_id_del_address(ifc);
 
   for (ALL_LIST_ELEMENTS (zebrad.client_list, node, nnode, client))
     if (client->ifinfo && CHECK_FLAG (ifc->conf, ZEBRA_IFC_REAL))
       zsend_interface_address (ZEBRA_INTERFACE_ADDRESS_DELETE, client, ifp, ifc);
 }
-
-#ifdef HAVE_MPLS
-void
-redistribute_add_mpls_xc (struct zmpls_xc *xc)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  /* Check to see and and ILM are waiting for this xc */
-  struct zmpls_in_segment *in;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_in_segment_list, node, in))
-  {
-    if (in->installed || in->xc != xc->index)
-      continue;
-
-    in->installed = 1;
-    mpls_ctrl_ilm_register (in);
-    redistribute_add_mpls_in_segment (in);
-  }
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[xc->owner])
-	zsend_mpls_xc_add (client, xc);
-}
-
-void
-redistribute_delete_mpls_xc (struct zmpls_xc *xc)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[xc->owner])
-	zsend_mpls_xc_delete (client, xc);
-
-  /* Check to see and and ILM depend on this xc */
-  struct zmpls_in_segment *in;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_in_segment_list, node, in))
-  {
-    if ((!in->installed) || in->xc != xc->index)
-      continue;
-
-    in->installed = 0;
-    mpls_ctrl_ilm_unregister (in);
-    redistribute_delete_mpls_in_segment (in);
-  }
-}
-
-void
-redistribute_add_mpls_in_segment (struct zmpls_in_segment *in)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  /* MPLS: check is there are any XC waiting for this */
-  struct zmpls_xc *xc;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_xc_list, node, xc))
-  {
-    struct zmpls_out_segment *out;
-    struct zmpls_in_segment tmp;
-
-    tmp.labelspace = xc->in_labelspace;
-    memcpy(&tmp.label, &xc->in_label, sizeof(struct zmpls_label));
-
-    if (xc->installed || !mpls_in_segment_match(in, &tmp))
-      continue;
-
-    out = mpls_out_segment_find (xc->out_index);
-
-    xc->installed = 1;
-    mpls_ctrl_xc_register (in, out);
-    redistribute_add_mpls_xc (xc);
-  }
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[in->owner])
-	zsend_mpls_in_segment_add (client, in);
-}
-
-void
-redistribute_delete_mpls_in_segment (struct zmpls_in_segment *in)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[in->owner])
-	zsend_mpls_in_segment_delete (client, in);
-
-  /* MPLS: check is there are any XC depending on this */
-  struct zmpls_xc *xc;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_xc_list, node, xc))
-  {
-    struct zmpls_out_segment *out;
-    struct zmpls_in_segment tmp;
-
-    tmp.labelspace = xc->in_labelspace;
-    memcpy(&tmp.label, &xc->in_label, sizeof(struct zmpls_label));
-
-    if ((!xc->installed) || !mpls_in_segment_match(in, &tmp))
-      continue;
-
-    out = mpls_out_segment_find (xc->out_index);
-
-    xc->installed = 0;
-    mpls_ctrl_xc_unregister (in, out);
-    redistribute_delete_mpls_xc (xc);
-  }
-}
-
-void
-redistribute_add_mpls_out_segment (struct zmpls_out_segment *out)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  /* MPLS: check is there are any FTN waiting for this */
-  /* MPLS: check is there are any XC waiting for this */
-  struct zmpls_xc *xc;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_xc_list, node, xc))
-  {
-    struct zmpls_in_segment tmp;
-    struct zmpls_in_segment *in;
-
-    if (xc->installed || xc->out_index != out->index)
-      continue;
-
-    tmp.labelspace = xc->in_labelspace;
-    memcpy(&tmp.label, &xc->in_label, sizeof(struct zmpls_label));
-    in = mpls_in_segment_find (&tmp);
-
-    xc->installed = 1;
-    redistribute_add_mpls_xc (xc);
-    mpls_ctrl_xc_register (in, out);
-  }
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[out->owner])
-	zsend_mpls_out_segment_add (client, out);
-}
-
-void
-redistribute_delete_mpls_out_segment (struct zmpls_out_segment *out)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[out->owner])
-	zsend_mpls_out_segment_delete (client, out);
-
-  /* MPLS: check is there are any FTN depending on this */
-  /* MPLS: check is there are any XC depending on this */
-  struct zmpls_xc *xc;
-  for (ALL_LIST_ELEMENTS_RO(&mpls_xc_list, node, xc))
-  {
-    struct zmpls_in_segment tmp;
-    struct zmpls_in_segment *in;
-
-    if ((!xc->installed) || xc->out_index != out->index)
-      continue;
-
-    tmp.labelspace = xc->in_labelspace;
-    memcpy(&tmp.label, &xc->in_label, sizeof(struct zmpls_label));
-    in = mpls_in_segment_find (&tmp);
-
-    xc->installed = 0;
-    mpls_ctrl_xc_unregister (in, out);
-    redistribute_delete_mpls_xc (xc);
-  }
-}
-
-void
-redistribute_add_mpls_labelspace (struct interface *ifp)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[ZEBRA_ROUTE_STATIC])
-	zsend_mpls_labelspace_add (client, ifp);
-}
-
-void
-redistribute_delete_mpls_labelspace (struct interface *ifp)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[ZEBRA_ROUTE_STATIC])
-	zsend_mpls_labelspace_delete (client, ifp);
-}
-
-void
-redistribute_add_mpls_ftn (struct zmpls_ftn *ftn)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[ftn->owner])
-	zsend_mpls_ftn_add (client, ftn);
-}
-
-void
-redistribute_delete_mpls_ftn (struct zmpls_ftn *ftn)
-{
-  struct listnode *node;
-  struct zserv *client;
-
-  for (ALL_LIST_ELEMENTS_RO(zebrad.client_list, node, client))
-     if (client->redist[ftn->owner])
-	zsend_mpls_ftn_delete (client, ftn);
-}
-#endif /* HAVE_MPLS */

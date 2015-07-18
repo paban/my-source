@@ -22,12 +22,8 @@
 
 #include <zebra.h>
 
-#include "if.h"
-#include "prefix.h"
-#include "rib.h"
-
-#include "zebra/zserv.h"
-#include "zebra/rt_netlink.h"
+/* Extern from rt_netlink.c */
+void netlink_route_read ();
 
 void route_read ()
 {

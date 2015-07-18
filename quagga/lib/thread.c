@@ -416,26 +416,10 @@ thread_master_create ()
 					   sizeof (struct thread_master));
 }
 
-static int thread_in_list(struct thread_list *list, struct thread *thread)
-{
-  struct thread *tt;
-
-  for (tt = list->head; tt; tt = tt->next)
-  {
-    if (tt == thread)
-    {
-      return 1;
-    }
-  }
-  return 0;
-}
-
 /* Add a new thread to the list.  */
 static void
 thread_list_add (struct thread_list *list, struct thread *thread)
 {
-  assert(!thread_in_list(list,thread));
-
   thread->next = NULL;
   thread->prev = list->tail;
   if (list->tail)
@@ -452,8 +436,6 @@ thread_list_add_before (struct thread_list *list,
 			struct thread *point, 
 			struct thread *thread)
 {
-  assert(!thread_in_list(list,thread));
-
   thread->next = point;
   thread->prev = point->prev;
   if (point->prev)
@@ -468,8 +450,6 @@ thread_list_add_before (struct thread_list *list,
 static struct thread *
 thread_list_delete (struct thread_list *list, struct thread *thread)
 {
-  assert(thread_in_list(list,thread));
-
   if (thread->next)
     thread->next->prev = thread->prev;
   else

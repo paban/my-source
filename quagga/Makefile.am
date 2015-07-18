@@ -2,10 +2,10 @@
 
 SUBDIRS = lib @ZEBRA@ @BGPD@ @RIPD@ @RIPNGD@ @OSPFD@ @OSPF6D@ \
          @ISISD@ @WATCHQUAGGA@ @VTYSH@ @OSPFCLIENT@ doc m4 @pkgsrcdir@ \
-         redhat @SOLARIS@ @LDPD@ @RSVPD@
+         redhat @SOLARIS@
 
-DIST_SUBDIRS = lib zebra bgpd ripd ripngd ospfd ospf6d ldpd rsvpd \
-	  isisd watchquagga vtysh ospfclient ldpd doc m4 pkgsrc redhat tests \
+DIST_SUBDIRS = lib zebra bgpd ripd ripngd ospfd ospf6d \
+	  isisd watchquagga vtysh ospfclient doc m4 pkgsrc redhat tests \
 	  solaris
 
 EXTRA_DIST = aclocal.m4 SERVICES TODO REPORTING-BUGS INSTALL.quagga.txt \

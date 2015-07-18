@@ -27,7 +27,6 @@
 #ifdef HAVE_IRDP
 #include "zebra/irdp.h"
 #endif
-#include "vty.h"
 
 /* For interface multicast configuration. */
 #define IF_ZEBRA_MULTICAST_UNSPEC 0
@@ -176,26 +175,6 @@ struct rtadvconf
 
 #endif /* RTADV */
 
-enum interface_type
-{
-  INTERFACE_TYPE_VLAN = 1,
-  INTERFACE_TYPE_TUNNEL,
-  INTERFACE_TYPE_MAX
-};
-
-struct interface_ops
-{
-  enum interface_type type;
-  void (*config)(struct vty*, struct interface*);
-  void (*show)(struct vty*, struct interface*);
-  int (*create)(struct interface*);
-  int (*delete)(struct interface*);
-  int (*create_check)(struct interface*);
-  int (*delete_check)(struct interface*);
-  void (*free)(struct interface*);
-  void *info;
-};
-
 /* `zebra' daemon local interface structure. */
 struct zebra_if
 {
@@ -213,9 +192,6 @@ struct zebra_if
 
   /* Installed addresses chains tree. */
   struct route_table *ipv4_subnets;
-
-  /* Interface specific operations. */
-  struct interface_ops *ops;
 
 #ifdef RTADV
   struct rtadvconf rtadv;
@@ -241,7 +217,6 @@ extern void if_up (struct interface *);
 extern void if_down (struct interface *);
 extern void if_refresh (struct interface *);
 extern void if_flags_update (struct interface *, uint64_t);
-extern void if_zebra_delete_ops (struct interface *);
 extern int if_subnet_add (struct interface *, struct connected *);
 extern int if_subnet_delete (struct interface *, struct connected *);
 
@@ -262,8 +237,5 @@ extern int ifaddr_proc_ipv6 (void);
 #ifdef BSDI
 extern int if_kvm_get_mtu (struct interface *);
 #endif /* BSDI */
-
-extern void if_vlan_init();
-extern void if_tunnel_init();
 
 #endif /* _ZEBRA_INTERFACE_H */

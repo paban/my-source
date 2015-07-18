@@ -21,18 +21,14 @@ EXTRA_DIST = extract.pl
 vtysh_cmd_FILES = $(top_srcdir)/bgpd/*.c $(top_srcdir)/isisd/*.c \
 		  $(top_srcdir)/ospfd/*.c $(top_srcdir)/ospf6d/*.c \
 		  $(top_srcdir)/ripd/*.c $(top_srcdir)/ripngd/*.c \
-		  $(top_srcdir)/ldpd/*.c \
 		  $(top_srcdir)/lib/keychain.c $(top_srcdir)/lib/routemap.c \
 		  $(top_srcdir)/lib/filter.c $(top_srcdir)/lib/plist.c \
 		  $(top_srcdir)/lib/distribute.c $(top_srcdir)/lib/if_rmap.c \
 		  $(top_srcdir)/lib/vty.c $(top_srcdir)/zebra/debug.c \
 		  $(top_srcdir)/zebra/interface.c \
-		  $(top_srcdir)/zebra/if_tunnel.c \
-		  $(top_srcdir)/zebra/if_vlan.c \
 		  $(top_srcdir)/zebra/irdp_interface.c \
 		  $(top_srcdir)/zebra/rtadv.c $(top_srcdir)/zebra/zebra_vty.c \
-		  $(top_srcdir)/zebra/zserv.c $(top_srcdir)/zebra/router-id.c \
-		  $(top_srcdir)/zebra/mpls_vty.c
+		  $(top_srcdir)/zebra/zserv.c $(top_srcdir)/zebra/router-id.c
 
 vtysh_cmd.c: $(vtysh_cmd_FILES)
 	./$(EXTRA_DIST) $(vtysh_cmd_FILES) > vtysh_cmd.c

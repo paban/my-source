@@ -50,8 +50,6 @@ typedef enum
   ZLOG_ZEBRA,
   ZLOG_RIP,
   ZLOG_BGP,
-  ZLOG_LDP,
-  ZLOG_RSVP,
   ZLOG_OSPF,
   ZLOG_RIPNG,  
   ZLOG_OSPF6,

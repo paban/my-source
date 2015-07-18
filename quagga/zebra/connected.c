@@ -174,7 +174,6 @@ void
 connected_up_ipv4 (struct interface *ifp, struct connected *ifc)
 {
   struct prefix_ipv4 p;
-  struct zapi_nexthop nh;
 
   if (! CHECK_FLAG (ifc->conf, ZEBRA_IFC_REAL))
     return;
@@ -189,12 +188,8 @@ connected_up_ipv4 (struct interface *ifp, struct connected *ifc)
   if (prefix_ipv4_any (&p))
     return;
 
-  memset (&nh, 0, sizeof (struct zapi_nexthop));
-  SET_FLAG(nh.type, ZEBRA_NEXTHOP_IFINDEX);
-  nh.intf.index = ifp->ifindex;
-
-  rib_add_route (ZEBRA_ROUTE_CONNECT, 0, (struct prefix*)&p,
-                 &nh, RT_TABLE_MAIN, ifp->metric, 0);
+  rib_add_ipv4 (ZEBRA_ROUTE_CONNECT, 0, &p, NULL, NULL, ifp->ifindex,
+	RT_TABLE_MAIN, ifp->metric, 0);
 
   rib_update ();
 }
@@ -285,7 +280,6 @@ void
 connected_down_ipv4 (struct interface *ifp, struct connected *ifc)
 {
   struct prefix_ipv4 p;
-  struct zapi_nexthop nh;
 
   if (! CHECK_FLAG (ifc->conf, ZEBRA_IFC_REAL))
     return;
@@ -300,11 +294,8 @@ connected_down_ipv4 (struct interface *ifp, struct connected *ifc)
   if (prefix_ipv4_any (&p))
     return;
 
-  memset (&nh, 0, sizeof (struct zapi_nexthop));
-  SET_FLAG (nh.type, ZEBRA_NEXTHOP_IFINDEX);
-  nh.intf.index = ifp->ifindex;
-
-  rib_delete_route (ZEBRA_ROUTE_CONNECT, 0, (struct prefix*)&p, &nh, 0);
+  /* Same logic as for connected_up_ipv4(): push the changes into the head. */
+  rib_delete_ipv4 (ZEBRA_ROUTE_CONNECT, 0, &p, NULL, ifp->ifindex, 0);
 
   rib_update ();
 }
@@ -334,7 +325,6 @@ void
 connected_up_ipv6 (struct interface *ifp, struct connected *ifc)
 {
   struct prefix_ipv6 p;
-  struct zapi_nexthop nh;
 
   if (! CHECK_FLAG (ifc->conf, ZEBRA_IFC_REAL))
     return;
@@ -345,17 +335,13 @@ connected_up_ipv6 (struct interface *ifp, struct connected *ifc)
   apply_mask_ipv6 (&p);
 
 #if ! defined (MUSICA) && ! defined (LINUX)
-  /* XXX: It is already done by rib_bogus_ipv6 within rib_add_route */
+  /* XXX: It is already done by rib_bogus_ipv6 within rib_add_ipv6 */
   if (IN6_IS_ADDR_UNSPECIFIED (&p.prefix))
     return;
 #endif
 
-  memset (&nh, 0, sizeof (struct zapi_nexthop));
-  SET_FLAG (nh.type, ZEBRA_NEXTHOP_IFINDEX);
-  nh.intf.index = ifp->ifindex;
-
-  rib_add_route (ZEBRA_ROUTE_CONNECT, 0, (struct prefix*)&p,
-                 &nh, 0, ifp->metric, 0);
+  rib_add_ipv6 (ZEBRA_ROUTE_CONNECT, 0, &p, NULL, ifp->ifindex, 0,
+                ifp->metric, 0);
 
   rib_update ();
 }
@@ -418,7 +404,6 @@ void
 connected_down_ipv6 (struct interface *ifp, struct connected *ifc)
 {
   struct prefix_ipv6 p;
-  struct zapi_nexthop nh;
 
   if (! CHECK_FLAG (ifc->conf, ZEBRA_IFC_REAL))
     return;
@@ -430,11 +415,7 @@ connected_down_ipv6 (struct interface *ifp, struct connected *ifc)
   if (IN6_IS_ADDR_UNSPECIFIED (&p.prefix))
     return;
 
-  memset (&nh, 0, sizeof (struct zapi_nexthop));
-  SET_FLAG (nh.type, ZEBRA_NEXTHOP_IFINDEX);
-  nh.intf.index = ifp->ifindex;
-
-  rib_delete_route (ZEBRA_ROUTE_CONNECT, 0, (struct prefix*)&p, &nh, 0);
+  rib_delete_ipv6 (ZEBRA_ROUTE_CONNECT, 0, &p, NULL, ifp->ifindex, 0);
 
   rib_update ();
 }

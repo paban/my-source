@@ -118,31 +118,33 @@ bgp_nexthop_same (struct nexthop *next1, struct nexthop *next2)
   if (next1->type != next2->type)
     return 0;
 
-  if (CHECK_FLAG (next1->type, ZEBRA_NEXTHOP_IPV4))
+  switch (next1->type)
     {
+    case ZEBRA_NEXTHOP_IPV4:
       if (! IPV4_ADDR_SAME (&next1->gate.ipv4, &next2->gate.ipv4))
 	return 0;
-    }
-#ifdef HAVE_IPV6
-  else if (CHECK_FLAG (next1->type, ZEBRA_NEXTHOP_IPV6))
-    {
-      if (!IPV6_ADDR_SAME (&next1->gate.ipv6, &next2->gate.ipv6))
-	return 0;
-    }
-#endif /* HAVE_IPV6 */
-
-  if (CHECK_FLAG (next1->type, ZEBRA_NEXTHOP_IFINDEX))
-    {
+      break;
+    case ZEBRA_NEXTHOP_IFINDEX:
+    case ZEBRA_NEXTHOP_IFNAME:
       if (next1->ifindex != next2->ifindex)
 	return 0;
-    }
-  else if (CHECK_FLAG (next1->type, ZEBRA_NEXTHOP_IFNAME))
-    {
-      if (!(next1->ifname && next2->ifname))
-        return 0;
-
-      if (strncmp(next1->ifname, next2->ifname, INTERFACE_NAMSIZ))
-        return 0;
+      break;
+#ifdef HAVE_IPV6
+    case ZEBRA_NEXTHOP_IPV6:
+      if (! IPV6_ADDR_SAME (&next1->gate.ipv6, &next2->gate.ipv6))
+	return 0;
+      break;
+    case ZEBRA_NEXTHOP_IPV6_IFINDEX:
+    case ZEBRA_NEXTHOP_IPV6_IFNAME:
+      if (! IPV6_ADDR_SAME (&next1->gate.ipv6, &next2->gate.ipv6))
+	return 0;
+      if (next1->ifindex != next2->ifindex)
+	return 0;
+      break;
+#endif /* HAVE_IPV6 */
+    default:
+      /* do nothing */
+      break;
     }
   return 1;
 }
@@ -712,7 +714,6 @@ zlookup_read ()
   int i;
   u_char nexthop_num;
   struct nexthop *nexthop;
-  struct zapi_nexthop znh;
   struct bgp_nexthop_cache *bnc;
 
   s = zlookup->ibuf;
@@ -749,27 +750,20 @@ zlookup_read ()
 	{
 	  nexthop = XMALLOC (MTYPE_NEXTHOP, sizeof (struct nexthop));
 	  memset (nexthop, 0, sizeof (struct nexthop));
-	  zapi_nexthop_read(s, &znh);
-
-	  nexthop->type = znh.type;
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
+	  nexthop->type = stream_getc (s);
+	  switch (nexthop->type)
 	    {
-	      nexthop->gate.ipv4.s_addr = znh.gw.ipv4.s_addr;
+	    case ZEBRA_NEXTHOP_IPV4:
+	      nexthop->gate.ipv4.s_addr = stream_get_ipv4 (s);
+	      break;
+	    case ZEBRA_NEXTHOP_IFINDEX:
+	    case ZEBRA_NEXTHOP_IFNAME:
+	      nexthop->ifindex = stream_getl (s);
+	      break;
+            default:
+              /* do nothing */
+              break;
 	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
-	    {
-	      assert (0);
-	    }
-
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	    {
-	      nexthop->ifindex = znh.intf.index;
-	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	    {
-	      assert (0);
-	    }
-
 	  bnc_nexthop_add (bnc, nexthop);
 	}
     }
@@ -829,7 +823,6 @@ zlookup_read_ipv6 ()
   int i;
   u_char nexthop_num;
   struct nexthop *nexthop;
-  struct zapi_nexthop znh;
   struct bgp_nexthop_cache *bnc;
 
   s = zlookup->ibuf;
@@ -865,29 +858,27 @@ zlookup_read_ipv6 ()
 
       for (i = 0; i < nexthop_num; i++)
 	{
-	  zapi_nexthop_read(s, &znh);
 	  nexthop = XMALLOC (MTYPE_NEXTHOP, sizeof (struct nexthop));
 	  memset (nexthop, 0, sizeof (struct nexthop));
-	  nexthop->type = znh.type;
-
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
+	  nexthop->type = stream_getc (s);
+	  switch (nexthop->type)
 	    {
-	      assert (0);
+	    case ZEBRA_NEXTHOP_IPV6:
+	      stream_get (&nexthop->gate.ipv6, s, 16);
+	      break;
+	    case ZEBRA_NEXTHOP_IPV6_IFINDEX:
+	    case ZEBRA_NEXTHOP_IPV6_IFNAME:
+	      stream_get (&nexthop->gate.ipv6, s, 16);
+	      nexthop->ifindex = stream_getl (s);
+	      break;
+	    case ZEBRA_NEXTHOP_IFINDEX:
+	    case ZEBRA_NEXTHOP_IFNAME:
+	      nexthop->ifindex = stream_getl (s);
+	      break;
+	    default:
+	      /* do nothing */
+	      break;
 	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
-	    {
-	      nexthop->gate.ipv6 = znh.gw.ipv6;
-	    }
-
-	  if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
-	    {
-	      nexthop->ifindex = znh.intf.index;
-	    }
-	  else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	    {
-	      assert (0);
-	    }
-
 	  bnc_nexthop_add (bnc, nexthop);
 	}
     }
@@ -947,8 +938,6 @@ bgp_import_check (struct prefix *p, u_int32_t *igpmetric,
   u_int32_t metric = 0;
   u_char nexthop_num;
   u_char nexthop_type;
-  struct zapi_nexthop znh;
-  int i;
 
   /* If lookup connection is not available return valid. */
   if (zlookup->sock < 0)
@@ -1018,22 +1007,17 @@ bgp_import_check (struct prefix *p, u_int32_t *igpmetric,
   /* If there is nexthop then this is active route. */
   if (nexthop_num)
     {
-      for (i = 0; i < nexthop_num; i++)
+      nexthop.s_addr = 0;
+      nexthop_type = stream_getc (s);
+      if (nexthop_type == ZEBRA_NEXTHOP_IPV4)
 	{
-	  zapi_nexthop_read(s, &znh);
-	  nexthop_type = znh.type;
-	  if (CHECK_FLAG (nexthop_type, ZEBRA_NEXTHOP_IPV4))
-	    {
-	      nexthop.s_addr = znh.gw.ipv4.s_addr;
-	    }
-	  else if (CHECK_FLAG (nexthop_type, ZEBRA_NEXTHOP_IPV6))
-	    {
-	      assert (0);
-	    }
+	  nexthop.s_addr = stream_get_ipv4 (s);
+	  if (igpnexthop)
+	    *igpnexthop = nexthop;
 	}
-
-      if (igpnexthop)
+      else
 	*igpnexthop = nexthop;
+
       return 1;
     }
   else

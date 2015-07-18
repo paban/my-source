@@ -690,17 +690,10 @@ vty_end_config (struct vty *vty)
       /* Nothing to do. */
       break;
     case CONFIG_NODE:
-    case MPLS_LABELSPACE_NODE:
     case INTERFACE_NODE:
-    case TUNNEL_NODE:
-    case MPLS_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_CONF_NODE:
     case ZEBRA_NODE:
     case RIP_NODE:
     case RIPNG_NODE:
-    case LDP_NODE:
-    case LDP_IF_NODE:
     case BGP_NODE:
     case BGP_VPNV4_NODE:
     case BGP_IPV4_NODE:
@@ -1104,17 +1097,10 @@ vty_stop_input (struct vty *vty)
       /* Nothing to do. */
       break;
     case CONFIG_NODE:
-    case MPLS_LABELSPACE_NODE:
     case INTERFACE_NODE:
-    case TUNNEL_NODE:
-    case MPLS_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_CONF_NODE:
     case ZEBRA_NODE:
     case RIP_NODE:
     case RIPNG_NODE:
-    case LDP_NODE:
-    case LDP_IF_NODE:
     case BGP_NODE:
     case RMAP_NODE:
     case OSPF_NODE:

@@ -131,7 +131,6 @@ if_create (const char *name, int namelen)
 	     "name exists already!", ifp->name);
   ifp->connected = list_new ();
   ifp->connected->del = (void (*) (void *)) connected_free;
-  ifp->mpls_labelspace = -1;
 
   if (if_master.if_new_hook)
     (*if_master.if_new_hook) (ifp);
@@ -770,30 +769,6 @@ if_nametoindex (const char *name)
   	 ? ifp->ifindex : 0;
 }
 #endif
-
-struct interface *if_getfirst()
-{
-  struct listnode *node = listhead(iflist);
-  return listgetdata(node);
-}
-
-struct interface *if_getnext(struct interface *old)
-{
-  struct interface *ifp;
-  struct listnode *node;
-  int flag = 0;
-
-  for (node = listhead(iflist); node; listnextnode(node)) {
-    ifp = listgetdata(node);
-    if (flag) {
-      return ifp;
-    }
-    if (ifp->ifindex == old->ifindex) {
-      flag = 1;
-    }
-  }
-  return NULL;
-}
 
 #ifndef HAVE_IF_INDEXTONAME
 char *

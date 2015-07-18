@@ -52,11 +52,13 @@ ripng_zebra_ipv6_add (struct prefix_ipv6 *p, struct in6_addr *nexthop,
     {
       api.type = ZEBRA_ROUTE_RIPNG;
       api.flags = 0;
-      api.message = ZAPI_MESSAGE_NEXTHOP;
+      api.message = 0;
+      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
       api.nexthop_num = 1;
-      api.nexthop[0].type = ZEBRA_NEXTHOP_IPV6|ZEBRA_NEXTHOP_IFINDEX;
-      memcpy (&api.nexthop[0].gw.ipv6, nexthop, sizeof (*nexthop));
-      api.nexthop[0].intf.index = ifindex;
+      api.nexthop = &nexthop;
+      SET_FLAG (api.message, ZAPI_MESSAGE_IFINDEX);
+      api.ifindex_num = 1;
+      api.ifindex = &ifindex;
       SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
       api.metric = metric;
       
@@ -74,12 +76,14 @@ ripng_zebra_ipv6_delete (struct prefix_ipv6 *p, struct in6_addr *nexthop,
     {
       api.type = ZEBRA_ROUTE_RIPNG;
       api.flags = 0;
-      api.message = ZAPI_MESSAGE_NEXTHOP;
+      api.message = 0;
+      SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
       api.nexthop_num = 1;
-      api.nexthop[0].type = ZEBRA_NEXTHOP_IPV6|ZEBRA_NEXTHOP_IFINDEX;
-      memcpy (&api.nexthop[0].gw.ipv6, nexthop, sizeof (*nexthop));
-      api.nexthop[0].intf.index = ifindex;
-      
+      api.nexthop = &nexthop;
+      SET_FLAG (api.message, ZAPI_MESSAGE_IFINDEX);
+      api.ifindex_num = 1;
+      api.ifindex = &ifindex;
+
       zapi_ipv6_route (ZEBRA_IPV6_ROUTE_DELETE, zclient, p, &api);
     }
 }
@@ -94,35 +98,46 @@ ripng_zebra_read_ipv6 (int command, struct zclient *zclient,
   unsigned long ifindex;
   struct in6_addr nexthop;
   struct prefix_ipv6 p;
-  int i;
 
   s = zclient->ibuf;
+  ifindex = 0;
+  memset (&nexthop, 0, sizeof (struct in6_addr));
 
-  zapi_ipv6_read (s, length, &api, &p);
+  /* Type, flags, message. */
+  api.type = stream_getc (s);
+  api.flags = stream_getc (s);
+  api.message = stream_getc (s);
+
+  /* IPv6 prefix. */
+  memset (&p, 0, sizeof (struct prefix_ipv6));
+  p.family = AF_INET6;
+  p.prefixlen = stream_getc (s);
+  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
     {
-      for (i = 0; i < api.nexthop_num; i++)
-        {
-          ifindex = 0;
-          memset (&nexthop, 0, sizeof (struct in6_addr));
-
-          if (CHECK_FLAG (api.nexthop[i].type, ZEBRA_NEXTHOP_IPV4))
-            memcpy(&nexthop, &api.nexthop[i].gw.ipv6, sizeof (nexthop));
-
-          if (CHECK_FLAG (api.nexthop[i].type, ZEBRA_NEXTHOP_IFINDEX))
-            ifindex = api.nexthop[i].intf.index;
-
-          if (command == ZEBRA_IPV6_ROUTE_ADD)
-            ripng_redistribute_add (api.type, RIPNG_ROUTE_REDISTRIBUTE,
-                                    &p, ifindex, &nexthop);
-          else
-            ripng_redistribute_delete (api.type, RIPNG_ROUTE_REDISTRIBUTE,
-                                       &p, ifindex);
-
-        }
+      api.nexthop_num = stream_getc (s);
+      stream_get (&nexthop, s, 16);
     }
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_IFINDEX))
+    {
+      api.ifindex_num = stream_getc (s);
+      ifindex = stream_getl (s);
+    }
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
+    api.distance = stream_getc (s);
+  else
+    api.distance = 0;
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_METRIC))
+    api.metric = stream_getl (s);
+  else
+    api.metric = 0;
+
+  if (command == ZEBRA_IPV6_ROUTE_ADD)
+    ripng_redistribute_add (api.type, RIPNG_ROUTE_REDISTRIBUTE, &p, ifindex, &nexthop);
+  else
+    ripng_redistribute_delete (api.type, RIPNG_ROUTE_REDISTRIBUTE, &p, ifindex);
 
   return 0;
 }

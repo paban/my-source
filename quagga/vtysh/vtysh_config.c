@@ -190,8 +190,6 @@ vtysh_config_parse_line (const char *line)
 	config = config_get (INTERFACE_NODE, line);
       else if (strncmp (line, "router-id", strlen ("router-id")) == 0)
 	config = config_get (ZEBRA_NODE, line);
-      else if (strncmp(line, "mpls static", strlen("mpls static")) == 0)
-	config = config_get (MPLS_LABELSPACE_NODE, line);
       else if (strncmp (line, "router rip", strlen ("router rip")) == 0)
 	config = config_get (RIP_NODE, line);
       else if (strncmp (line, "router ripng", strlen ("router ripng")) == 0)
@@ -206,8 +204,6 @@ vtysh_config_parse_line (const char *line)
   	config = config_get (ISIS_NODE, line);
       else if (strncmp (line, "router bgp", strlen ("router bgp")) == 0)
 	config = config_get (BGP_NODE, line);
-      else if (strncmp (line, "mpls ldp", strlen ("mpls ldp")) == 0)
-	config = config_get (LDP_NODE, line);
       else if (strncmp (line, "route-map", strlen ("route-map")) == 0)
 	config = config_get (RMAP_NODE, line);
       else if (strncmp (line, "access-list", strlen ("access-list")) == 0)

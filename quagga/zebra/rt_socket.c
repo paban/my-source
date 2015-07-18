@@ -114,46 +114,37 @@ kernel_rtm_ipv4 (int cmd, struct prefix *p, struct rib *rib, int family)
 	{
 	  if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
 	    {
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IPV4 ||
+		  nexthop->rtype == NEXTHOP_TYPE_IPV4_IFINDEX)
 		{
 		  sin_gate.sin_addr = nexthop->rgate.ipv4;
 		  gate = 1;
 		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
-		assert (0);
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_DROP))
-	        {
-	          struct in_addr loopback;
-	          loopback.s_addr = htonl (INADDR_LOOPBACK);
-	          sin_gate.sin_addr = loopback;
-	          gate = 1;
-	        }
-
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->rtype == NEXTHOP_TYPE_IFNAME
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV4_IFINDEX)
 		ifindex = nexthop->rifindex;
 	    }
 	  else
 	    {
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
+	      if (nexthop->type == NEXTHOP_TYPE_IPV4 ||
+		  nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX)
 		{
 		  sin_gate.sin_addr = nexthop->gate.ipv4;
 		  gate = 1;
 		}
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
-		assert (0);
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_DROP))
-	        {
-	          struct in_addr loopback;
-	          loopback.s_addr = htonl (INADDR_LOOPBACK);
-	          sin_gate.sin_addr = loopback;
-	          gate = 1;
-	        }
-
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->type == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->type == NEXTHOP_TYPE_IFNAME
+		  || nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX)
 		ifindex = nexthop->ifindex;
-
-	  if (cmd == RTM_ADD)
-	    SET_FLAG (nexthop->flags, NEXTHOP_FLAG_FIB);
+	      if (nexthop->type == NEXTHOP_TYPE_BLACKHOLE)
+		{
+		  struct in_addr loopback;
+		  loopback.s_addr = htonl (INADDR_LOOPBACK);
+		  sin_gate.sin_addr = loopback;
+		  gate = 1;
+		}
+	    }
 
 	  if (gate && p->prefixlen == 32)
 	    mask = NULL;
@@ -399,28 +390,32 @@ kernel_rtm_ipv6_multipath (int cmd, struct prefix *p, struct rib *rib,
 	{
 	  if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
 	    {
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IPV6
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
 		{
 		  sin_gate.sin6_addr = nexthop->rgate.ipv6;
 		  gate = 1;
 		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
-		assert (0);
-
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->rtype == NEXTHOP_TYPE_IFNAME
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
 		ifindex = nexthop->rifindex;
 	    }
 	  else
 	    {
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
+	      if (nexthop->type == NEXTHOP_TYPE_IPV6
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
 		{
 		  sin_gate.sin6_addr = nexthop->gate.ipv6;
 		  gate = 1;
 		}
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
-		assert (0);
-
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->type == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->type == NEXTHOP_TYPE_IFNAME
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
 		ifindex = nexthop->ifindex;
 	    }
 

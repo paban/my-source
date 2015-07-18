@@ -88,28 +88,6 @@ if_zebra_new_hook (struct interface *ifp)
   return 0;
 }
 
-void
-if_zebra_delete_ops (struct interface *ifp)
-{
-  struct zebra_if *zebra_if = ifp->info;
-
-  if (!zebra_if)
-    return;
-
-  if (zebra_if->ops)
-    {
-      if (zebra_if->ops->free)
-	{
-          zebra_if->ops->free(ifp);
-	}
-      else
-	{
-	  XFREE (MTYPE_TMP, zebra_if->ops);
-	  zebra_if->ops = NULL;
-	}
-    }
-}
-
 /* Called when interface is deleted. */
 static int
 if_zebra_delete_hook (struct interface *ifp)
@@ -119,20 +97,6 @@ if_zebra_delete_hook (struct interface *ifp)
   if (ifp->info)
     {
       zebra_if = ifp->info;
-
-      /* Free interface specific ops block. */
-      if (zebra_if->ops)
-	{
- 	  if (zebra_if->ops->free)
-	    {
-              zebra_if->ops->free(ifp);
-	    }
-	  else
-	    {
-	      XFREE (MTYPE_TMP, zebra_if->ops);
-	      zebra_if->ops = NULL;
-	    }
-	}
 
       /* Free installed address chains tree. */
       if (zebra_if->ipv4_subnets)
@@ -709,10 +673,6 @@ if_dump_vty (struct vty *vty, struct interface *ifp)
   if (ifp->desc)
     vty_out (vty, "  Description: %s%s", ifp->desc,
 	     VTY_NEWLINE);
-
-  if (zebra_if->ops && zebra_if->ops->show)
-    zebra_if->ops->show (vty, ifp);
-
   if (ifp->ifindex == IFINDEX_INTERNAL)
     {
       vty_out(vty, "  pseudo interface%s", VTY_NEWLINE);
@@ -767,14 +727,6 @@ if_dump_vty (struct vty *vty, struct interface *ifp)
       vty_out(vty, "%s", VTY_NEWLINE);
     }
 
-#ifdef HAVE_MPLS
-  /* MPLS labelspace */
-  if (ifp->mpls_labelspace != -1)
-    {
-      vty_out(vty, "  MPLS labelspace %u", ifp->mpls_labelspace);
-      vty_out(vty, "%s", VTY_NEWLINE);
-    }
-#endif
   for (rn = route_top (zebra_if->ipv4_subnets); rn; rn = route_next (rn))
     {
       if (! rn->info)
@@ -1567,18 +1519,6 @@ if_config_write (struct vty *vty)
   for (ALL_LIST_ELEMENTS_RO (iflist, node, ifp))
     {
       struct zebra_if *if_data;
-
-      if_data = ifp->info;
-      
-      if (if_data->ops && if_data->ops->config)
-	if_data->ops->config (vty, ifp);
-
-      vty_out (vty, "!%s", VTY_NEWLINE);
-    }
-
-  for (ALL_LIST_ELEMENTS_RO (iflist, node, ifp))
-    {
-      struct zebra_if *if_data;
       struct listnode *addrnode;
       struct connected *ifc;
       struct prefix *p;
@@ -1596,10 +1536,7 @@ if_config_write (struct vty *vty)
 	 while processing config script */
       if (ifp->bandwidth != 0)
 	vty_out(vty, " bandwidth %u%s", ifp->bandwidth, VTY_NEWLINE); 
-#ifdef HAVE_MPLS
-      if (ifp->mpls_labelspace != -1)
-	vty_out(vty, " mpls labelspace %u%s",ifp->mpls_labelspace,VTY_NEWLINE);
-#endif
+
       if (CHECK_FLAG(ifp->status, ZEBRA_INTERFACE_LINKDETECTION))
 	vty_out(vty, " link-detect%s", VTY_NEWLINE);
 

@@ -48,8 +48,8 @@ rip_zebra_ipv4_add (struct prefix_ipv4 *p, struct in_addr *nexthop,
       api.message = 0;
       SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
       api.nexthop_num = 1;
-      api.nexthop[0].type = ZEBRA_NEXTHOP_IPV4;
-      api.nexthop[0].gw.ipv4.s_addr = nexthop->s_addr;
+      api.nexthop = &nexthop;
+      api.ifindex_num = 0;
       SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
       api.metric = metric;
 
@@ -78,8 +78,8 @@ rip_zebra_ipv4_delete (struct prefix_ipv4 *p, struct in_addr *nexthop,
       api.message = 0;
       SET_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP);
       api.nexthop_num = 1;
-      api.nexthop[0].type = ZEBRA_NEXTHOP_IPV4;
-      api.nexthop[0].gw.ipv4.s_addr = nexthop->s_addr;
+      api.nexthop = &nexthop;
+      api.ifindex_num = 0;
       SET_FLAG (api.message, ZAPI_MESSAGE_METRIC);
       api.metric = metric;
 
@@ -98,38 +98,48 @@ rip_zebra_read_ipv4 (int command, struct zclient *zclient, zebra_size_t length)
   unsigned long ifindex;
   struct in_addr nexthop;
   struct prefix_ipv4 p;
-  int i;
   
   s = zclient->ibuf;
+  ifindex = 0;
+  nexthop.s_addr = 0;
 
-  zapi_ipv4_read(s, length, &api, &p);
+  /* Type, flags, message. */
+  api.type = stream_getc (s);
+  api.flags = stream_getc (s);
+  api.message = stream_getc (s);
 
-  if (!CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
-    api.distance = 255;
+  /* IPv4 prefix. */
+  memset (&p, 0, sizeof (struct prefix_ipv4));
+  p.family = AF_INET;
+  p.prefixlen = stream_getc (s);
+  stream_get (&p.prefix, s, PSIZE (p.prefixlen));
 
   /* Nexthop, ifindex, distance, metric. */
   if (CHECK_FLAG (api.message, ZAPI_MESSAGE_NEXTHOP))
     {
-      for (i = 0; i < api.nexthop_num; i++)
-        {
-          ifindex = 0;
-          nexthop.s_addr = 0;
-
-          if (CHECK_FLAG (api.nexthop[i].type, ZEBRA_NEXTHOP_IPV4))
-            nexthop.s_addr = api.nexthop[i].gw.ipv4.s_addr;
-
-          if (CHECK_FLAG (api.nexthop[i].type, ZEBRA_NEXTHOP_IFINDEX))
-            ifindex = api.nexthop[i].intf.index;
-
-          /* Then fetch IPv4 prefixes. */
-          if (command == ZEBRA_IPV4_ROUTE_ADD)
-            rip_redistribute_add (api.type, RIP_ROUTE_REDISTRIBUTE, &p,
-                                  ifindex, &nexthop, api.metric, api.distance);
-          else 
-            rip_redistribute_delete (api.type, RIP_ROUTE_REDISTRIBUTE,
-                                     &p, ifindex);
-        }
+      api.nexthop_num = stream_getc (s);
+      nexthop.s_addr = stream_get_ipv4 (s);
     }
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_IFINDEX))
+    {
+      api.ifindex_num = stream_getc (s);
+      ifindex = stream_getl (s);
+    }
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_DISTANCE))
+    api.distance = stream_getc (s);
+  else
+    api.distance = 255;
+  if (CHECK_FLAG (api.message, ZAPI_MESSAGE_METRIC))
+    api.metric = stream_getl (s);
+  else
+    api.metric = 0;
+
+  /* Then fetch IPv4 prefixes. */
+  if (command == ZEBRA_IPV4_ROUTE_ADD)
+    rip_redistribute_add (api.type, RIP_ROUTE_REDISTRIBUTE, &p, ifindex, 
+                          &nexthop, api.metric, api.distance);
+  else 
+    rip_redistribute_delete (api.type, RIP_ROUTE_REDISTRIBUTE, &p, ifindex);
 
   return 0;
 }

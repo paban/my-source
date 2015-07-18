@@ -2385,15 +2385,9 @@ DEFUN (config_exit,
       vty->node = ENABLE_NODE;
       vty_config_unlock (vty);
       break;
-    case MPLS_LABELSPACE_NODE:
     case INTERFACE_NODE:
-    case TUNNEL_NODE:
-    case MPLS_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_CONF_NODE:
     case ZEBRA_NODE:
     case BGP_NODE:
-    case LDP_NODE:
     case RIP_NODE:
     case RIPNG_NODE:
     case OSPF_NODE:
@@ -2414,9 +2408,6 @@ DEFUN (config_exit,
       break;
     case KEYCHAIN_KEY_NODE:
       vty->node = KEYCHAIN_NODE;
-      break;
-    case LDP_IF_NODE:
-      vty->node = INTERFACE_NODE;
       break;
     default:
       break;
@@ -2443,17 +2434,10 @@ DEFUN (config_end,
       /* Nothing to do. */
       break;
     case CONFIG_NODE:
-    case MPLS_LABELSPACE_NODE:
     case INTERFACE_NODE:
-    case TUNNEL_NODE:
-    case MPLS_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_NODE:
-    case MPLS_TE_TUNNEL_CONF_NODE:
     case ZEBRA_NODE:
     case RIP_NODE:
     case RIPNG_NODE:
-    case LDP_NODE:
-    case LDP_IF_NODE:
     case BGP_NODE:
     case BGP_VPNV4_NODE:
     case BGP_IPV4_NODE:

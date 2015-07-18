@@ -206,7 +206,8 @@ kernel_ioctl_ipv4 (u_long cmd, struct prefix *p, struct rib *rib, int family)
 	{
 	  if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
 	    {
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IPV4 ||
+		  nexthop->rtype == NEXTHOP_TYPE_IPV4_IFINDEX)
 		{
 		  sin_gate.sin_family = AF_INET;
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
@@ -215,16 +216,8 @@ kernel_ioctl_ipv4 (u_long cmd, struct prefix *p, struct rib *rib, int family)
 		  sin_gate.sin_addr = nexthop->rgate.ipv4;
 		  rtentry.rt_flags |= RTF_GATEWAY;
 		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
-		{
-		  assert (0);
-		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_DROP))
-		{
-		  SET_FLAG (rtentry.rt_flags, RTF_REJECT);
-		}
-
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->rtype == NEXTHOP_TYPE_IFNAME)
 		{
 		  ifp = if_lookup_by_index (nexthop->rifindex);
 		  if (ifp)
@@ -232,14 +225,11 @@ kernel_ioctl_ipv4 (u_long cmd, struct prefix *p, struct rib *rib, int family)
 		  else
 		    return -1;
 		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFNAME))
-		{
-		  assert (0);
-		}
 	    }
 	  else
 	    {
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
+	      if (nexthop->type == NEXTHOP_TYPE_IPV4 ||
+		  nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX)
 		{
 		  sin_gate.sin_family = AF_INET;
 #ifdef HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
@@ -248,26 +238,14 @@ kernel_ioctl_ipv4 (u_long cmd, struct prefix *p, struct rib *rib, int family)
 		  sin_gate.sin_addr = nexthop->gate.ipv4;
 		  rtentry.rt_flags |= RTF_GATEWAY;
 		}
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
-		{
-		  assert (0);
-		}
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_DROP))
-		{
-		  SET_FLAG (rtentry.rt_flags, RTF_REJECT);
-		}
-
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->type == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->type == NEXTHOP_TYPE_IFNAME)
 		{
 		  ifp = if_lookup_by_index (nexthop->ifindex);
 		  if (ifp)
 		    rtentry.rt_dev = ifp->name;
 		  else
 		    return -1;
-		}
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-		{
-		  assert (0);
 		}
 	    }
 
@@ -487,21 +465,17 @@ kernel_ioctl_ipv6_multipath (u_long cmd, struct prefix *p, struct rib *rib,
 	{
 	  if (CHECK_FLAG (nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
 	    {
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV6))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IPV6
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
 		{
 		  memcpy (&rtm.rtmsg_gateway, &nexthop->rgate.ipv6,
 			  sizeof (struct in6_addr));
 		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
-		{
-		  assert (0);
-		}
-	      else if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_DROP))
-		{
-		  SET_FLAG (rtentry.rt_flags, RTF_REJECT);
-		}
-
-	      if (CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->rtype == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->rtype == NEXTHOP_TYPE_IFNAME
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->rtype == NEXTHOP_TYPE_IPV6_IFINDEX)
 		rtm.rtmsg_ifindex = nexthop->rifindex;
 	      else
 		rtm.rtmsg_ifindex = 0;
@@ -509,21 +483,17 @@ kernel_ioctl_ipv6_multipath (u_long cmd, struct prefix *p, struct rib *rib,
 	    }
 	  else
 	    {
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV6))
+	      if (nexthop->type == NEXTHOP_TYPE_IPV6
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
 		{
 		  memcpy (&rtm.rtmsg_gateway, &nexthop->gate.ipv6,
 			  sizeof (struct in6_addr));
 		}
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
-		{
-		  assert (0);
-		}
-	      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_DROP))
-		{
-		  SET_FLAG (rtentry.rt_flags, RTF_REJECT);
-		}
-
-	      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX))
+	      if (nexthop->type == NEXTHOP_TYPE_IFINDEX
+		  || nexthop->type == NEXTHOP_TYPE_IFNAME
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFNAME
+		  || nexthop->type == NEXTHOP_TYPE_IPV6_IFINDEX)
 		rtm.rtmsg_ifindex = nexthop->ifindex;
 	      else
 		rtm.rtmsg_ifindex = 0;

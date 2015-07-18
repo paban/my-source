@@ -419,24 +419,25 @@ route_match_ip_next_hop (void *rule, struct prefix *prefix,
   if (type == RMAP_ZEBRA)
     {
       nexthop = object;
-      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
-	{
-	  p.family = AF_INET;
-	  p.prefix = nexthop->gate.ipv4;
-	  p.prefixlen = IPV4_MAX_BITLEN;
-	}
-      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX) ||
-	       CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	{
-	  if (!CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
-	    return RMAP_NOMATCH;
-	  p.family = AF_INET;
-	  p.prefix = nexthop->rgate.ipv4;
-	  p.prefixlen = IPV4_MAX_BITLEN;
-	}
-      else
+      switch (nexthop->type) {
+      case NEXTHOP_TYPE_IFINDEX:
+      case NEXTHOP_TYPE_IFNAME:
+      case NEXTHOP_TYPE_IPV4_IFINDEX:
+      case NEXTHOP_TYPE_IPV4_IFNAME:
+        if (nexthop->rtype != NEXTHOP_TYPE_IPV4)
+		return RMAP_NOMATCH;
+        p.family = AF_INET;
+        p.prefix = nexthop->rgate.ipv4;
+        p.prefixlen = IPV4_MAX_BITLEN;
+        break;
+      case NEXTHOP_TYPE_IPV4:
+        p.family = AF_INET;
+        p.prefix = nexthop->gate.ipv4;
+        p.prefixlen = IPV4_MAX_BITLEN;
+        break;
+      default:
         return RMAP_NOMATCH;
-
+      }
       alist = access_list_lookup (AFI_IP, (char *) rule);
       if (alist == NULL)
 	return RMAP_NOMATCH;
@@ -484,24 +485,25 @@ route_match_ip_next_hop_prefix_list (void *rule, struct prefix *prefix,
   if (type == RMAP_ZEBRA)
     {
       nexthop = object;
-      if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IPV4))
-	{
-	  p.family = AF_INET;
-	  p.prefix = nexthop->gate.ipv4;
-	  p.prefixlen = IPV4_MAX_BITLEN;
-	}
-      else if (CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFINDEX) ||
-	       CHECK_FLAG (nexthop->type, ZEBRA_NEXTHOP_IFNAME))
-	{
-	  if (!CHECK_FLAG (nexthop->rtype, ZEBRA_NEXTHOP_IPV4))
-	    return RMAP_NOMATCH;
-	  p.family = AF_INET;
-	  p.prefix = nexthop->rgate.ipv4;
-	  p.prefixlen = IPV4_MAX_BITLEN;
-	}
-      else
+      switch (nexthop->type) {
+      case NEXTHOP_TYPE_IFINDEX:
+      case NEXTHOP_TYPE_IFNAME:
+      case NEXTHOP_TYPE_IPV4_IFINDEX:
+      case NEXTHOP_TYPE_IPV4_IFNAME:
+        if (nexthop->rtype != NEXTHOP_TYPE_IPV4)
+		return RMAP_NOMATCH;
+        p.family = AF_INET;
+        p.prefix = nexthop->rgate.ipv4;
+        p.prefixlen = IPV4_MAX_BITLEN;
+        break;
+      case NEXTHOP_TYPE_IPV4:
+        p.family = AF_INET;
+        p.prefix = nexthop->gate.ipv4;
+        p.prefixlen = IPV4_MAX_BITLEN;
+        break;
+      default:
         return RMAP_NOMATCH;
-
+      }
       plist = prefix_list_lookup (AFI_IP, (char *) rule);
       if (plist == NULL)
         return RMAP_NOMATCH;

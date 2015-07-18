@@ -71,16 +71,13 @@ handle_route_entry (mib2_ipRouteEntry_t *routeEntry)
 {
 	struct prefix_ipv4	prefix;
  	struct in_addr		tmpaddr, gateway;
-	u_short			zebra_flags = 0;
-	struct zapi_nexthop	nh;
+	u_char			zebra_flags = 0;
 
 	if (routeEntry->ipRouteInfo.re_ire_type & IRE_CACHETABLE)
 		return;
 
 	if (routeEntry->ipRouteInfo.re_ire_type & IRE_HOST_REDIRECT)
 		zebra_flags |= ZEBRA_FLAG_SELFROUTE;
-
-	memset(&nh, 0, sizeof(struct zapi_nexthop));
 
 	prefix.family = AF_INET;
 
@@ -91,11 +88,9 @@ handle_route_entry (mib2_ipRouteEntry_t *routeEntry)
 	prefix.prefixlen = ip_masklen (tmpaddr);
 
 	gateway.s_addr = routeEntry->ipRouteNextHop;
-	nh.gw.ipv4 = gateway;
-	SET_FLAG(nh.type, ZEBRA_NEXTHOP_IPV4);
 
-	rib_add_route (ZEBRA_ROUTE_KERNEL, zebra_flags,
-                       (struct prefix*)&prefix, &nh, 0, 0, 0);
+	rib_add_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags, &prefix,
+		      &gateway, NULL, 0, 0, 0, 0);
 }
 
 void

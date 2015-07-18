@@ -761,13 +761,11 @@ void
 rtm_read (struct rt_msghdr *rtm)
 {
   int flags;
-  u_short zebra_flags;
+  u_char zebra_flags;
   union sockunion dest, mask, gate;
   char ifname[INTERFACE_NAMSIZ + 1];
   short ifnlen = 0;
-  struct zapi_nexthop nh;
 
-  memset(&nh, 0, sizeof(struct zapi_nexthop));
   zebra_flags = 0;
 
   /* Read destination and netmask and gateway from rtm message
@@ -804,20 +802,13 @@ rtm_read (struct rt_msghdr *rtm)
 
   /* This is a reject or blackhole route */
   if (flags & RTF_REJECT)
-    {
-      SET_FLAG (nh.type, ZEBRA_NEXTHOP_DROP);
-      nh.gw.drop = ZEBRA_DROP_REJECT;
-    }
-  else if (flags & RTF_BLACKHOLE)
-    {
-      SET_FLAG (nh.type, ZEBRA_NEXTHOP_DROP);
-      nh.gw.drop = ZEBRA_DROP_BLACKHOLE;
-    }
+    SET_FLAG (zebra_flags, ZEBRA_FLAG_REJECT);
+  if (flags & RTF_BLACKHOLE)
+    SET_FLAG (zebra_flags, ZEBRA_FLAG_BLACKHOLE);
 
   if (dest.sa.sa_family == AF_INET)
     {
       struct prefix_ipv4 p;
-      struct zapi_nexthop znh;
 
       p.family = AF_INET;
       p.prefix = dest.sin.sin_addr;
@@ -825,10 +816,6 @@ rtm_read (struct rt_msghdr *rtm)
 	p.prefixlen = IPV4_MAX_PREFIXLEN;
       else
 	p.prefixlen = ip_masklen (mask.sin.sin_addr);
-
-      memset (&znh, 0, sizeof (struct zapi_nexthop));
-      znh.type = ZEBRA_NEXTHOP_IPV4;
-      znh.gw.ipv4 = gate.sin;
       
       /* Catch self originated messages and match them against our current RIB.
        * At the same time, ignore unconfirmed messages, they should be tracked
@@ -840,7 +827,7 @@ rtm_read (struct rt_msghdr *rtm)
         int ret;
         if (! IS_ZEBRA_DEBUG_RIB)
           return;
-        ret = rib_lookup_route_nexthop ((struct prefix*)&p, &znh); 
+        ret = rib_lookup_ipv4_route (&p, &gate); 
         inet_ntop (AF_INET, &p.prefix, buf, INET_ADDRSTRLEN);
         switch (rtm->rtm_type)
         {
@@ -904,20 +891,17 @@ rtm_read (struct rt_msghdr *rtm)
        * to specify the route really
        */
       if (rtm->rtm_type == RTM_CHANGE)
-        rib_delete_route (ZEBRA_ROUTE_KERNEL, zebra_flags,
-                          (struct prefix*)&p, &nh, 0);
-
-      nh.gw.ipv4 = gate.sin.sin_addr;
-      SET_FLAG (nh.type, ZEBRA_NEXTHOP_IPV4);
+        rib_delete_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags, &p,
+                         NULL, 0, 0);
       
       if (rtm->rtm_type == RTM_GET 
           || rtm->rtm_type == RTM_ADD
           || rtm->rtm_type == RTM_CHANGE)
-	rib_add_route (ZEBRA_ROUTE_KERNEL, zebra_flags, (struct prefix*)&p,
-                       &nh, NULL, 0, 0, 0);
+	rib_add_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags, 
+		      &p, &gate.sin.sin_addr, NULL, 0, 0, 0, 0);
       else
-	rib_delete_route (ZEBRA_ROUTE_KERNEL, zebra_flags,
-                          (struct prefix*)&p, &nh, 0);
+	rib_delete_ipv4 (ZEBRA_ROUTE_KERNEL, zebra_flags, 
+		      &p, &gate.sin.sin_addr, 0, 0);
     }
 #ifdef HAVE_IPV6
   if (dest.sa.sa_family == AF_INET6)
@@ -949,26 +933,17 @@ rtm_read (struct rt_msghdr *rtm)
        * to specify the route really
        */
       if (rtm->rtm_type == RTM_CHANGE)
-        rib_delete_route (ZEBRA_ROUTE_KERNEL, zebra_flags, (struct prefix*)&p,
+        rib_delete_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags, &p,
                          NULL, 0, 0);
-
-      nh.gw.ipv6 = gate.sin6.sin_addr6;
-      SET_FLAG (nh.type, ZEBRA_NEXTHOP_IPV6);
-
-      if (ifindex)
-        {
-          nh.intf.index = ifindex;
-          SET_FLAG (nh.type, ZEBRA_NEXTHOP_IFINDEX);
-        }
       
       if (rtm->rtm_type == RTM_GET 
           || rtm->rtm_type == RTM_ADD
           || rtm->rtm_type == RTM_CHANGE)
-	rib_add_route (ZEBRA_ROUTE_KERNEL, zebra_flags, (struct prefix*)&p,
-                       &nh, 0, 0, 0);
+	rib_add_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags,
+		      &p, &gate.sin6.sin6_addr, ifindex, 0, 0, 0);
       else
-	rib_delete_route (ZEBRA_ROUTE_KERNEL, zebra_flags,
-                          (struct prefix*)&p, &nh, 0);
+	rib_delete_ipv6 (ZEBRA_ROUTE_KERNEL, zebra_flags,
+			 &p, &gate.sin6.sin6_addr, ifindex, 0);
     }
 #endif /* HAVE_IPV6 */
 }

@@ -449,25 +449,6 @@ stream_get_ipv4 (struct stream *s)
 
   return l;
 }
-
-/* Get next float from the stream. */
-float
-stream_getf_from (struct stream *s, size_t from)
-{
-  u_int32_t l = stream_getl_from (s, from);
-  float f;
-  ntohf ((float*)&l, &f);
-  return f;
-}
-
-float
-stream_getf (struct stream *s)
-{
-  u_int32_t l = stream_getl (s);
-  float f;
-  ntohf ((float*)&l, &f);
-  return f;
-}
 
 /* Copy to source to stream.
  *
@@ -706,24 +687,6 @@ stream_put_prefix (struct stream *s, struct prefix *p)
   s->endp += psize;
   
   return psize;
-}
-
-int
-stream_putf (struct stream *s, float f)
-{
-  u_int32_t l;
-  htonf(&f, (float *)&l);
-  stream_putl (s, l);
-  return 4;
-}
-
-int
-stream_putf_at (struct stream *s, size_t putp, float f)
-{
-  u_int32_t l;
-  htonf(&f, (float *)&l);
-  stream_putl_at (s, putp, l);
-  return 4;
 }
 
 /* Read size from fd. */
@@ -1005,26 +968,4 @@ stream_fifo_free (struct stream_fifo *fifo)
 {
   stream_fifo_clean (fifo);
   XFREE (MTYPE_STREAM_FIFO, fifo);
-}
-
-void
-htonf (float *src, float *dst)
-{
-  u_int32_t lu1, lu2;
-
-  memcpy (&lu1, src, sizeof (u_int32_t));
-  lu2 = htonl (lu1);
-  memcpy (dst, &lu2, sizeof (u_int32_t));
-  return;
-}
-
-void
-ntohf (float *src, float *dst)
-{
-  u_int32_t lu1, lu2;
-
-  memcpy (&lu1, src, sizeof (u_int32_t));
-  lu2 = ntohl (lu1);
-  memcpy (dst, &lu2, sizeof (u_int32_t));
-  return;
 }

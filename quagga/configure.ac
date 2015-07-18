@@ -179,16 +179,10 @@ dnl Packages configuration
 dnl ----------------------
 AC_ARG_ENABLE(vtysh,
 [  --enable-vtysh          include integrated vty shell for Quagga])
-AC_ARG_ENABLE(mpls,
-[  --enable-mpls           turn on MPLS related features and daemons])
 AC_ARG_ENABLE(ipv6,
 [  --disable-ipv6          turn off IPv6 related features and daemons])
 AC_ARG_ENABLE(zebra,
 [  --disable-zebra         do not build zebra daemon])
-AC_ARG_ENABLE(ldpd,
-[  --disable-ldpd          do not build ldpd])
-AC_ARG_ENABLE(rsvpd,
-[  --disable-rsvpd         do not build rsvpd])
 AC_ARG_ENABLE(bgpd,
 [  --disable-bgpd          do not build bgpd])
 AC_ARG_ENABLE(ripd,
@@ -706,7 +700,7 @@ AC_MSG_CHECKING(zebra between kernel interface method)
 if test x"$opsys" = x"gnu-linux"; then
   if test "${enable_netlink}" = "yes";then
     AC_MSG_RESULT(netlink)
-    RT_METHOD="netlink.o rt_netlink.o"
+    RT_METHOD=rt_netlink.o
     AC_DEFINE(HAVE_NETLINK,,netlink)
     netlink=yes
   elif test "${enable_netlink}" = "no"; then
@@ -715,7 +709,7 @@ if test x"$opsys" = x"gnu-linux"; then
     netlink=no
   else
     AC_MSG_RESULT(netlink)
-    RT_METHOD="netlink.o rt_netlink.o"
+    RT_METHOD=rt_netlink.o
     AC_DEFINE(HAVE_NETLINK,,netlink)
     netlink=yes
   fi
@@ -1121,39 +1115,6 @@ QUAGGA_INCLUDES
 #endif
 ])dnl
 
-dnl ----------
-dnl MPLS check
-dnl ----------
-MPLS_METHOD=""
-AC_MSG_CHECKING(whether this OS has MPLS stack)
-AM_CONDITIONAL(MPLS_ENABLED, test "x${enable_mpls}" != "xno")
-if test "${enable_mpls}" = "no"; then
-  enable_ldpd="no"
-  enable_rsvpd="no"
-  AC_MSG_RESULT(disabled)
-else
-  if test "x${enable_mpls}" = "xnull"; then
-    AC_DEFINE(HAVE_MPLS,1,Enable MPLS)
-    MPLS_METHOD="mpls_null.o"
-    AC_MSG_RESULT(MPLS Null)
-  else
-    AC_EGREP_CPP(yes, [
-	#include <linux/mpls.h>
-	#if MPLS_LINUX_VERSION
-	yes
-	#endif],
-	[AC_DEFINE(HAVE_MPLS,1,Enable MPLS)
-	 AC_DEFINE(LINUX_MPLS,1,Linux MPLS)
-	 MPLS_METHOD="mpls_netlink.o"
-	 AC_MSG_RESULT(MPLS Linux)],
-	[enable_ldpd="no"
-	 enable_rsvpd="no"
-	 AC_MSG_RESULT(no)]
-    )
-  fi
-fi
-AC_SUBST(MPLS_METHOD)
-
 dnl --------------------
 dnl Daemon disable check
 dnl --------------------
@@ -1181,18 +1142,6 @@ else
   OSPFD="ospfd"
 fi
 
-if test "${enable_ldpd}" = "no";then
-  LDPD=""
-else
-  LDPD="ldpd"
-fi
-
-if test "${enable_rsvpd}" = "no";then
-  RSVPD=""
-else
-  RSVPD="rsvpd"
-fi
-
 if test "${enable_watchquagga}" = "no";then
   WATCHQUAGGA=""
 else
@@ -1208,6 +1157,7 @@ if test "${enable_opaque_lsa}" = "yes"; then
       OSPFCLIENT="ospfclient"
     fi
   fi
+
 fi
 
 case "${enable_ripngd}" in
@@ -1241,8 +1191,6 @@ fi
 
 AC_SUBST(ZEBRA)
 AC_SUBST(BGPD)
-AC_SUBST(LDPD)
-AC_SUBST(RSVPD)
 AC_SUBST(RIPD)
 AC_SUBST(RIPNGD)
 AC_SUBST(OSPFD)
@@ -1458,8 +1406,6 @@ fi
 AC_DEFINE_UNQUOTED(PATH_ZEBRA_PID, "$quagga_statedir/zebra.pid",zebra PID)
 AC_DEFINE_UNQUOTED(PATH_RIPD_PID, "$quagga_statedir/ripd.pid",ripd PID)
 AC_DEFINE_UNQUOTED(PATH_RIPNGD_PID, "$quagga_statedir/ripngd.pid",ripngd PID)
-AC_DEFINE_UNQUOTED(PATH_LDPD_PID, "$quagga_statedir/ldpd.pid",ldpd PID)
-AC_DEFINE_UNQUOTED(PATH_RSVPD_PID, "$quagga_statedir/rsvpd.pid",rsvpd PID)
 AC_DEFINE_UNQUOTED(PATH_BGPD_PID, "$quagga_statedir/bgpd.pid",bgpd PID)
 AC_DEFINE_UNQUOTED(PATH_OSPFD_PID, "$quagga_statedir/ospfd.pid",ospfd PID)
 AC_DEFINE_UNQUOTED(PATH_OSPF6D_PID, "$quagga_statedir/ospf6d.pid",ospf6d PID)
@@ -1469,8 +1415,6 @@ AC_DEFINE_UNQUOTED(ZEBRA_SERV_PATH, "$quagga_statedir/zserv.api",zebra api socke
 AC_DEFINE_UNQUOTED(ZEBRA_VTYSH_PATH, "$quagga_statedir/zebra.vty",zebra vty socket)
 AC_DEFINE_UNQUOTED(RIP_VTYSH_PATH, "$quagga_statedir/ripd.vty",rip vty socket)
 AC_DEFINE_UNQUOTED(RIPNG_VTYSH_PATH, "$quagga_statedir/ripngd.vty",ripng vty socket)
-AC_DEFINE_UNQUOTED(LDP_VTYSH_PATH, "$quagga_statedir/ldpd.vty",ldpd vty socket)
-AC_DEFINE_UNQUOTED(RSVP_VTYSH_PATH, "$quagga_statedir/rsvpd.vty",rsvpd vty socket)
 AC_DEFINE_UNQUOTED(BGP_VTYSH_PATH, "$quagga_statedir/bgpd.vty",bgpd vty socket)
 AC_DEFINE_UNQUOTED(OSPF_VTYSH_PATH, "$quagga_statedir/ospfd.vty",ospfd vty socket)
 AC_DEFINE_UNQUOTED(OSPF6_VTYSH_PATH, "$quagga_statedir/ospf6d.vty",ospf6d vty socket)
@@ -1498,8 +1442,6 @@ AC_MSG_RESULT($ac_cv_htonl_works)
 
 AC_CONFIG_FILES([Makefile lib/Makefile zebra/Makefile ripd/Makefile 
 	  ripngd/Makefile bgpd/Makefile ospfd/Makefile watchquagga/Makefile
-	  ldpd/Makefile
-	  rsvpd/Makefile
 	  ospf6d/Makefile isisd/Makefile vtysh/Makefile doc/Makefile 
 	  ospfclient/Makefile tests/Makefile m4/Makefile redhat/Makefile
 	  pkgsrc/Makefile

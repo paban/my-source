@@ -1893,10 +1893,7 @@ bgp_update_rsclient (struct peer *rsclient, afi_t afi, safi_t safi,
 
       /* Update MPLS tag.  */
       if (safi == SAFI_MPLS_VPN)
-        {
-          bgp_info_set_flag (rn, ri, BGP_INFO_MPLS);
-          memcpy ((bgp_info_extra_get (ri))->tag, tag, 3);
-        }
+        memcpy ((bgp_info_extra_get (ri))->tag, tag, 3);
 
       bgp_info_set_flag (rn, ri, BGP_INFO_VALID);
 
@@ -1926,10 +1923,7 @@ bgp_update_rsclient (struct peer *rsclient, afi_t afi, safi_t safi,
 
   /* Update MPLS tag. */
   if (safi == SAFI_MPLS_VPN)
-    {
-      bgp_info_set_flag (rn, new, BGP_INFO_MPLS);
-      memcpy ((bgp_info_extra_get (new))->tag, tag, 3);
-    }
+    memcpy ((bgp_info_extra_get (new))->tag, tag, 3);
 
   bgp_info_set_flag (rn, new, BGP_INFO_VALID);
 

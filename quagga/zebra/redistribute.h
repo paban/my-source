@@ -47,17 +47,6 @@ extern void zebra_interface_address_delete_update (struct interface *,
 						   struct connected *c);
 
 extern int zebra_check_addr (struct prefix *);
-#ifdef HAVE_MPLS
-void redistribute_add_mpls_xc (struct zmpls_xc *xc);
-void redistribute_delete_mpls_xc (struct zmpls_xc *xc);
-void redistribute_add_mpls_ftn (struct zmpls_ftn *ftn);
-void redistribute_delete_mpls_ftn (struct zmpls_ftn *ftn);
-void redistribute_add_mpls_in_segment (struct zmpls_in_segment *in);
-void redistribute_delete_mpls_in_segment (struct zmpls_in_segment *in);
-void redistribute_add_mpls_out_segment (struct zmpls_out_segment *out);
-void redistribute_delete_mpls_out_segment (struct zmpls_out_segment *out);
-void redistribute_add_mpls_labelspace (struct interface *ifp);
-void redistribute_delete_mpls_labelspace (struct interface *ifp);
-#endif
 
 #endif /* _ZEBRA_REDISTRIBUTE_H */
+
